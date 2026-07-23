@@ -6,3 +6,4 @@ dist/
 inbox/*.json
 reports/*.md
 decisions/*.md
+server/hermes-*.md
