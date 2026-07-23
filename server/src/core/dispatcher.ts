@@ -89,14 +89,28 @@ export class Dispatcher {
       currentTask: Array.from(this.running.keys()).join(', ') || undefined
     });
 
-    const pending = this.store.listTasks({ status: 'pending' });
+    // FIFO: listTasks sorts newest-first; dispatch oldest first so pipelines
+    // (research -> synthesis) run in creation order.
+    const pending = this.store.listTasks({ status: 'pending' }).reverse();
     for (const task of pending) {
       if (this.running.size >= orch.maxConcurrent) break;
       if (this.running.has(task.id)) continue;
       const role = this.resolveRole(task);
       if (!role) continue;
+      if (!this.depsSatisfied(task)) continue;
       this.execute(task, role).catch(e => console.error(`Dispatcher: task ${task.id} failed:`, e));
     }
+  }
+
+  /**
+   * `context.dependsOn: ["<task-id>", …]` gates dispatch until every listed
+   * task is done. The dependent task's prompt gets the dependencies' results
+   * appended, so an integrator subtask actually sees its inputs.
+   */
+  private depsSatisfied(task: Task): boolean {
+    const deps = task.context?.dependsOn;
+    if (!Array.isArray(deps) || deps.length === 0) return true;
+    return deps.every((id: string) => this.store.getTask(id)?.status === 'done');
   }
 
   private buildPrompt(task: Task, role: string): string {
@@ -112,6 +126,16 @@ export class Dispatcher {
     if (task.context && Object.keys(task.context).length > 0) {
       lines.push(`# Context`, '```json', JSON.stringify(task.context, null, 2), '```', '');
     }
+    const deps = task.context?.dependsOn;
+    if (Array.isArray(deps) && deps.length > 0) {
+      lines.push(`# Results from prerequisite tasks`);
+      for (const id of deps) {
+        const dep = this.store.getTask(id);
+        if (dep?.result) {
+          lines.push(`## ${dep.title}`, '', dep.result, '');
+        }
+      }
+    }
     if (role === 'orchestrator') {
       lines.push(
         `# Orchestrator instructions`,
@@ -121,6 +145,7 @@ export class Dispatcher {
         '```',
         `Available roles: engineer (Claude Opus — code), engineer-local (deepseek — code, cheaper), planner (product planning), researcher (deep research), sales, marketing, generalist.`,
         `Each subtask description must be fully standalone — the executing agent sees ONLY that description.`,
+        `If a subtask must wait for others (e.g. a final synthesis/integration step), add their task ids to its context: {"role":"planner","dependsOn":["<id1>","<id2>"]} — the API response to each POST gives you the created task's id. Dependent tasks are held until all dependencies are done, and their results are automatically shown to the dependent agent.`,
         `After dispatching, output a summary of the plan: which subtasks you created and why. Check existing tasks first with: curl -s http://localhost:${port}/api/inbox?limit=20`,
         ``
       );
