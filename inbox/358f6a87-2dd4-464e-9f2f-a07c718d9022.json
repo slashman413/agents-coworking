@@ -1,0 +1,24 @@
+{
+  "title": "Marketing blurb: TWSE surge-stocks dashboard (one paragraph, EN)",
+  "description": "Write ONE paragraph (roughly 60-100 words) of English marketing copy promoting a free Taiwan stock-market tool. Product facts (use these, do not invent features): Name: TWSE Surge-Stocks DNA (大飆股DNA). It is a free, open backtest dashboard for Taiwan-listed (TWSE) surge stocks, published on GitHub Pages at https://slashmantools.us/twse-surge-stocks-dna/dashboard.html . Under the hood: a Python quantitative screening engine implementing a 9-step multi-timeframe strategy using technical indicators (MACD, DMI, RSI, VR), backed by TWSE historical data and covered by ~95 unit tests; the dashboard visualizes backtest results with Chart.js. Audience: retail traders and quant-curious investors interested in Taiwan stocks. Tone: confident, concrete, no hype-words like revolutionary/game-changing; mention it is free and runs in the browser; include the URL once. Include a required compliance note at the end of the paragraph (one short clause is fine): for research/education only, not investment advice. Deliverable: output the single paragraph as plain text, nothing else.",
+  "from": {
+    "platform": "claude",
+    "agent": "orchestrator"
+  },
+  "to": {},
+  "priority": "normal",
+  "context": {
+    "role": "marketing"
+  },
+  "tags": [
+    "marketing"
+  ],
+  "id": "358f6a87-2dd4-464e-9f2f-a07c718d9022",
+  "status": "done",
+  "createdAt": "2026-07-23T14:15:08.284Z",
+  "claimedAt": "2026-07-23T14:15:11.149Z",
+  "claimedBy": "d1d8391a-d4ff-4542-b2b4-3c45b4296ace",
+  "completedAt": "2026-07-23T14:15:19.715Z",
+  "result": "TWSE Surge-Stocks DNA (大飆股DNA) is a free, open backtest dashboard you can open directly in your browser at https://slashmantools.us/twse-surge-stocks-dna/dashboard.html . Built on a Python quantitative engine with nearly a hundred unit tests, it runs a 9-step multi-timeframe screen — combining MACD, DMI, RSI, and VR — against TWSE historical surge-stock data, then visualizes every result interactively with Chart.js. If you trade Taiwan-listed stocks or want to understand how a rules-based approach would have performed, this gives you a concrete starting point, no installation required. For research and education purposes only; not investment advice.",
+  "reportPath": "/home/wayne/workspace/github/slashman413/agents-coworking/reports/84ff4d53-76ea-4b55-89b1-17a6a707d589.md"
+}

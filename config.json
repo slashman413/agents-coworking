@@ -48,7 +48,8 @@
     "taskTimeoutMs": 1800000,
     "defaultRole": "generalist",
     "roles": {
-      "orchestrator": { "exec": "claude", "model": "claude-fable-5" },
+      "orchestrator": { "exec": "claude", "model": "claude-opus-4-8" },
+      "orchestrator-fable": { "exec": "claude", "model": "claude-fable-5" },
       "engineer": { "exec": "claude", "model": "claude-opus-4-8" },
       "engineer-local": { "exec": "hermes", "model": "deepseek-v4-flash" },
       "planner": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
