@@ -1,0 +1,44 @@
+{
+  "server": {
+    "port": 4200,
+    "host": "0.0.0.0",
+    "name": "cowork-mcp",
+    "version": "1.0.0",
+    "apiKey": null
+  },
+  "paths": {
+    "agencyAgents": "../github/slashman413/agency-agents",
+    "inbox": "./inbox",
+    "reports": "./reports",
+    "skills": "./skills",
+    "status": "./.status",
+    "decisions": "./decisions"
+  },
+  "platforms": {
+    "claude": {
+      "enabled": true,
+      "agentsDir": "~/.claude/agents",
+      "color": "#D97757"
+    },
+    "hermes": {
+      "enabled": true,
+      "skillsDir": "../hermes-agent/skills",
+      "color": "#7C3AED"
+    },
+    "antigravity": {
+      "enabled": true,
+      "skillsDir": "~/.gemini/config/skills",
+      "color": "#0EA5E9"
+    }
+  },
+  "services": {
+    "vllm35b": { "url": "http://localhost:8000/v1", "enabled": false },
+    "vllm27b": { "url": "http://localhost:8001/v1", "enabled": false },
+    "firecrawl": { "url": "http://localhost:3002", "enabled": false },
+    "twseMcp": { "url": "http://localhost:8082/mcp", "enabled": false }
+  },
+  "inbox": {
+    "autoArchiveDays": 30,
+    "maxRetries": 3
+  }
+}

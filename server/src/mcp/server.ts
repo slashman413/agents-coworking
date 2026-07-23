@@ -1,0 +1,284 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+import type { Config } from '../types.js';
+import type { Store } from '../core/store.js';
+import type { EventBus } from '../core/events.js';
+
+export function createMcpServer(config: Config, store: Store, eventBus: EventBus) {
+  const server = new McpServer({
+    name: 'Multi-Agent Cowork Server',
+    version: '1.0.0'
+  });
+
+  // 1. register_agent
+  server.tool(
+    'register_agent',
+    {
+      platform: z.string(),
+      agent_name: z.string(),
+      session_id: z.string().optional(),
+      capabilities: z.array(z.string()).optional(),
+      current_task: z.string().optional()
+    },
+    async (args) => {
+      try {
+        const agent = store.registerAgent({
+          platform: args.platform,
+          agentName: args.agent_name,
+          sessionId: args.session_id,
+          capabilities: args.capabilities,
+          currentTask: args.current_task
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(agent) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 2. heartbeat
+  server.tool(
+    'heartbeat',
+    {
+      agent_id: z.string(),
+      current_task: z.string().optional(),
+      status: z.enum(['idle', 'working', 'blocked']).optional()
+    },
+    async (args) => {
+      try {
+        const agent = store.updateHeartbeat({
+          agentId: args.agent_id,
+          currentTask: args.current_task,
+          status: args.status
+        });
+        if (!agent) throw new Error('Agent not found');
+        return { content: [{ type: 'text', text: JSON.stringify(agent) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 3. get_roster
+  server.tool(
+    'get_roster',
+    {
+      platform: z.string().optional(),
+      category: z.string().optional(),
+      search: z.string().optional(),
+      active_only: z.boolean().optional()
+    },
+    async (args) => {
+      try {
+        let agents = store.getRoster({ search: args.search, division: args.category });
+        if (args.platform) {
+          agents = agents.filter(a => a.platforms?.includes(args.platform!));
+        }
+        return { content: [{ type: 'text', text: JSON.stringify(agents) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 4. create_task
+  server.tool(
+    'create_task',
+    {
+      title: z.string(),
+      description: z.string(),
+      from_platform: z.string(),
+      from_agent: z.string(),
+      to_platform: z.string().optional(),
+      to_agent: z.string().optional(),
+      priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+      skill: z.string().optional(),
+      context: z.record(z.any()).optional(),
+      tags: z.array(z.string()).optional()
+    },
+    async (args) => {
+      try {
+        const task = store.createTask({
+          title: args.title,
+          description: args.description,
+          from: { platform: args.from_platform, agent: args.from_agent },
+          to: { platform: args.to_platform, agent: args.to_agent },
+          priority: args.priority as any,
+          skill: args.skill,
+          context: args.context,
+          tags: args.tags
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(task) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 5. claim_task
+  server.tool(
+    'claim_task',
+    {
+      task_id: z.string(),
+      agent_id: z.string()
+    },
+    async (args) => {
+      try {
+        const task = store.claimTask({ taskId: args.task_id, agentId: args.agent_id });
+        if (!task) throw new Error('Task not found');
+        return { content: [{ type: 'text', text: JSON.stringify(task) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 6. complete_task
+  server.tool(
+    'complete_task',
+    {
+      task_id: z.string(),
+      result: z.string().optional(),
+      report_path: z.string().optional()
+    },
+    async (args) => {
+      try {
+        const task = store.completeTask({ taskId: args.task_id, result: args.result, reportPath: args.report_path });
+        if (!task) throw new Error('Task not found');
+        return { content: [{ type: 'text', text: JSON.stringify(task) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 7. list_inbox
+  server.tool(
+    'list_inbox',
+    {
+      status: z.enum(['pending', 'claimed', 'in-progress', 'done', 'rejected']).optional(),
+      platform: z.string().optional(),
+      agent: z.string().optional(),
+      limit: z.number().default(20)
+    },
+    async (args) => {
+      try {
+        const tasks = store.listTasks({
+          status: args.status,
+          platform: args.platform,
+          agent: args.agent,
+          limit: args.limit
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(tasks) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 8. file_report
+  server.tool(
+    'file_report',
+    {
+      title: z.string(),
+      type: z.string(),
+      author_platform: z.string(),
+      author_agent: z.string(),
+      content: z.string(),
+      status: z.enum(['draft', 'review', 'final']).default('draft'),
+      tags: z.array(z.string()).optional()
+    },
+    async (args) => {
+      try {
+        const report = store.fileReport({
+          title: args.title,
+          type: args.type,
+          author_platform: args.author_platform,
+          author_agent: args.author_agent,
+          content: args.content,
+          status: args.status,
+          tags: args.tags
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(report) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 9. list_reports
+  server.tool(
+    'list_reports',
+    {
+      type: z.string().optional(),
+      platform: z.string().optional(),
+      limit: z.number().default(20)
+    },
+    async (args) => {
+      try {
+        const reports = store.listReports({
+          type: args.type,
+          platform: args.platform,
+          limit: args.limit
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(reports) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 10. get_dashboard
+  server.tool(
+    'get_dashboard',
+    {},
+    async () => {
+      try {
+        const dashboard = store.getDashboard();
+        return { content: [{ type: 'text', text: JSON.stringify(dashboard) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  server.resource(
+    'status',
+    'cowork://status',
+    async (uri) => {
+      return {
+        contents: [{
+          uri: uri.href,
+          text: JSON.stringify(store.getDashboard())
+        }]
+      };
+    }
+  );
+
+  server.resource(
+    'roster',
+    'cowork://roster',
+    async (uri) => {
+      return {
+        contents: [{
+          uri: uri.href,
+          text: JSON.stringify(store.getRoster())
+        }]
+      };
+    }
+  );
+
+  const handleRequest = async (req: any, res: any) => {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on('close', () => { transport.close(); });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  };
+  
+  const handleSSE = async (req: any, res: any) => {
+    await handleRequest(req, res);
+  };
+
+  return { handleRequest, handleSSE };
+}

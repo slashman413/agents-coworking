@@ -1,0 +1,371 @@
+# 🤝 Multi-Agent Cowork Framework
+
+A filesystem-based MCP server + Web UI dashboard that enables multi-platform AI
+agents to coordinate, dispatch tasks, and share reports — all through a single
+pane of glass.
+
+## Supported Platforms
+
+| Platform | Agents | Format |
+|----------|--------|--------|
+| Claude Code | 254 | `.md` with YAML frontmatter |
+| Antigravity (AGY) | Built-in + skills | `SKILL.md` |
+| Hermes Agent | 39 skills | `SKILL.md` + triggers |
+| Gemini CLI | Converted from source | `.md` subagents |
+| GitHub Copilot | Same as Claude | `.md` agents |
+| Codex | Converted | `.toml` agents |
+| Cursor | Converted | `.mdc` rules |
+| + 7 more | See agency-agents repo | Various formats |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Node.js** ≥ 20 (tested with v22)
+- **npm** ≥ 10
+- The [agency-agents](../github/slashman413/agency-agents) repo cloned locally
+
+### 1. Install Dependencies
+
+```bash
+cd agents-coworking/server
+npm install
+```
+
+### 2. Configure Settings
+
+Edit `agents-coworking/config.json` to match your environment:
+
+```json
+{
+  "server": {
+    "port": 4200,          // ← Change the port here
+    "host": "0.0.0.0",     // ← Bind address (0.0.0.0 = all interfaces)
+    "name": "cowork-mcp",
+    "version": "1.0.0",
+    "apiKey": null          // ← Set a string to require API key auth, or null for open
+  },
+  "paths": {
+    "agencyAgents": "../github/slashman413/agency-agents",  // ← Path to agency-agents repo
+    "inbox": "./inbox",
+    "reports": "./reports",
+    "skills": "./skills",
+    "status": "./.status",
+    "decisions": "./decisions"
+  }
+}
+```
+
+> **All paths are relative to `agents-coworking/`** (the parent of `server/`).
+> Use `~` for home directory paths (e.g., `~/.claude/agents`).
+
+#### Key Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `server.port` | `4200` | HTTP port for MCP endpoint + Web UI |
+| `server.host` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
+| `server.apiKey` | `null` | API key for authentication (null = no auth) |
+| `paths.agencyAgents` | `../github/slashman413/agency-agents` | Path to the agency-agents repo |
+| `platforms.*.enabled` | `true` | Enable/disable individual platforms |
+| `platforms.*.agentsDir` | varies | Where platform-specific agents live on disk |
+| `services.*.enabled` | `false` | Enable/disable service health monitoring |
+
+### 3. Start the Server
+
+```bash
+# Development mode (with hot-reload)
+cd agents-coworking/server
+npm run dev
+
+# Production mode
+npm run build
+npm start
+```
+
+You should see:
+
+```
+🤝 Cowork MCP Server running at http://0.0.0.0:4200
+   MCP endpoint: http://0.0.0.0:4200/mcp
+   Web Dashboard: http://0.0.0.0:4200/
+   REST API: http://0.0.0.0:4200/api/
+   Roster loaded: 254 agents across 16 divisions
+```
+
+### 4. Open the Dashboard
+
+Open **http://localhost:4200** in your browser.
+
+---
+
+## Connecting AI Agents
+
+### Claude Code
+
+Add to your MCP configuration (`~/.claude.json` or project-level):
+
+```json
+{
+  "mcpServers": {
+    "cowork": {
+      "url": "http://localhost:4200/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
+```
+
+Then in Claude Code, the agent can call:
+```
+Use the cowork MCP tools: register_agent, create_task, get_roster, etc.
+```
+
+### Antigravity (AGY)
+
+Add to your AGY MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "cowork": {
+      "url": "http://localhost:4200/mcp"
+    }
+  }
+}
+```
+
+### Hermes Agent
+
+Configure the MCP endpoint in Hermes:
+
+```json
+{
+  "mcp_endpoints": {
+    "cowork": "http://localhost:4200/mcp"
+  }
+}
+```
+
+### Any MCP-Compatible Client
+
+The server speaks standard MCP over Streamable HTTP. Any client that supports
+MCP can connect to `http://localhost:4200/mcp`.
+
+---
+
+## MCP Tools Reference
+
+Once connected, agents have access to these tools:
+
+| Tool | Description |
+|------|-------------|
+| `register_agent` | Register this agent session (platform, name, capabilities) |
+| `heartbeat` | Update status and current task |
+| `get_roster` | Search 254 agents across all platforms |
+| `create_task` | Create a task for another agent/platform |
+| `claim_task` | Claim a pending inbox task |
+| `complete_task` | Mark a task as done with results |
+| `list_inbox` | List inbox tasks with status/platform filters |
+| `file_report` | File a structured report |
+| `list_reports` | List reports with type/platform filters |
+| `get_dashboard` | Get full dashboard data (active agents, inbox stats, etc.) |
+
+### Example: Cross-Platform Task Dispatch
+
+```
+You: "Review the auth code in saas-starter"
+
+AGY Agent calls:
+  create_task(
+    title: "Review auth middleware",
+    from_platform: "antigravity",
+    from_agent: "self",
+    to_platform: "claude",
+    to_agent: "engineering-code-reviewer",
+    priority: "normal"
+  )
+
+→ Task appears in dashboard inbox
+→ Claude Code picks it up, runs review
+→ Claude calls file_report(...) + complete_task(...)
+→ Report appears in dashboard
+```
+
+---
+
+## REST API
+
+The Web UI uses these endpoints (also available for scripts/integrations):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/status` | Dashboard overview data |
+| `GET` | `/api/agents` | Active agent list |
+| `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
+| `POST` | `/api/inbox` | Create a new task |
+| `PATCH` | `/api/inbox/:id` | Claim or complete a task |
+| `GET` | `/api/reports` | Reports list |
+| `GET` | `/api/reports/:id` | Full report content |
+| `GET` | `/api/roster?division=engineering` | Agent roster (filterable) |
+| `GET` | `/api/roster/divisions` | Division metadata |
+| `GET` | `/api/config` | Current configuration |
+| `GET` | `/api/events` | SSE event stream |
+
+---
+
+## Directory Structure
+
+```
+agents-coworking/
+├── config.json              # Central settings file
+├── README.md                # This file
+├── PROTOCOL.md              # Protocol specification
+├── server/                  # MCP Server + Web UI
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── src/                 # TypeScript source
+│   └── public/              # Web UI (HTML/CSS/JS)
+├── inbox/                   # Task queue (JSON files, auto-managed)
+├── reports/                 # Generated reports (markdown)
+├── skills/                  # Cross-platform shared skills
+├── decisions/               # Decision log
+└── .status/                 # Runtime state (auto-managed)
+```
+
+---
+
+## Debugging
+
+### MCP Inspector
+
+Test the MCP endpoint with the official inspector:
+
+```bash
+npx @modelcontextprotocol/inspector http://localhost:4200/mcp
+```
+
+This opens a web UI at http://localhost:6274 where you can browse and test all
+10 MCP tools interactively.
+
+### curl Examples
+
+```bash
+# Check server status
+curl http://localhost:4200/api/status | jq
+
+# List active agents
+curl http://localhost:4200/api/agents | jq
+
+# List pending inbox tasks
+curl "http://localhost:4200/api/inbox?status=pending" | jq
+
+# Browse engineering agents in roster
+curl "http://localhost:4200/api/roster?division=engineering" | jq
+
+# Watch real-time events
+curl -N http://localhost:4200/api/events
+```
+
+### Test MCP Tool Calls
+
+```bash
+# Register a test agent
+curl -X POST http://localhost:4200/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "register_agent",
+      "arguments": {
+        "platform": "antigravity",
+        "agent_name": "test-agent",
+        "current_task": "Testing MCP connection"
+      }
+    },
+    "id": 1
+  }'
+
+# Get dashboard data
+curl -X POST http://localhost:4200/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "get_dashboard",
+      "arguments": {}
+    },
+    "id": 2
+  }'
+```
+
+---
+
+## Configuration Reference
+
+### Full `config.json` Example
+
+```json
+{
+  "server": {
+    "port": 4200,
+    "host": "0.0.0.0",
+    "name": "cowork-mcp",
+    "version": "1.0.0",
+    "apiKey": null
+  },
+  "paths": {
+    "agencyAgents": "../github/slashman413/agency-agents",
+    "inbox": "./inbox",
+    "reports": "./reports",
+    "skills": "./skills",
+    "status": "./.status",
+    "decisions": "./decisions"
+  },
+  "platforms": {
+    "claude": {
+      "enabled": true,
+      "agentsDir": "~/.claude/agents",
+      "color": "#D97757"
+    },
+    "hermes": {
+      "enabled": true,
+      "skillsDir": "../hermes-agent/skills",
+      "color": "#7C3AED"
+    },
+    "antigravity": {
+      "enabled": true,
+      "skillsDir": "~/.gemini/config/skills",
+      "color": "#0EA5E9"
+    }
+  },
+  "services": {
+    "vllm35b": { "url": "http://localhost:8000/v1", "enabled": false },
+    "vllm27b": { "url": "http://localhost:8001/v1", "enabled": false },
+    "firecrawl": { "url": "http://localhost:3002", "enabled": false },
+    "twseMcp": { "url": "http://localhost:8082/mcp", "enabled": false }
+  },
+  "inbox": {
+    "autoArchiveDays": 30,
+    "maxRetries": 3
+  }
+}
+```
+
+### Environment-Specific Overrides
+
+For different environments, create separate config files and specify at startup:
+
+```bash
+CONFIG_PATH=./config.production.json npm start
+```
+
+---
+
+## License
+
+Internal tool — part of the slashman413 workspace automation suite.

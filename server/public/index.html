@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cowork MCP Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <aside class="sidebar" id="sidebar">
+      <div class="logo-area">
+        <span class="logo-icon">🚀</span>
+        <h1 class="logo-text">Cowork MCP</h1>
+      </div>
+      <nav class="nav-menu">
+        <a href="#dashboard" class="nav-item active" data-view="dashboard">
+          <span class="nav-icon">📊</span>
+          <span class="nav-text">Dashboard</span>
+        </a>
+        <a href="#agents" class="nav-item" data-view="agents">
+          <span class="nav-icon">🤖</span>
+          <span class="nav-text">Active Agents</span>
+        </a>
+        <a href="#inbox" class="nav-item" data-view="inbox">
+          <span class="nav-icon">📬</span>
+          <span class="nav-text">Inbox</span>
+        </a>
+        <a href="#reports" class="nav-item" data-view="reports">
+          <span class="nav-icon">📄</span>
+          <span class="nav-text">Reports</span>
+        </a>
+        <a href="#roster" class="nav-item" data-view="roster">
+          <span class="nav-icon">👥</span>
+          <span class="nav-text">Agent Roster</span>
+        </a>
+        <a href="#config" class="nav-item" data-view="config">
+          <span class="nav-icon">⚙️</span>
+          <span class="nav-text">Configuration</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <p>Cowork Server v1.0.0</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <h2 id="view-title">Dashboard</h2>
+        <div class="header-actions">
+          <div id="connection-status" class="status-indicator">
+            <div class="dot connecting"></div>
+            <span>Connecting...</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="content-area" id="content">
+        <!-- Views rendered here -->
+      </div>
+    </main>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+  
+  <div id="modal-container" class="modal-container hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content glass-effect" id="modal-content">
+      <!-- Modal rendered here -->
+    </div>
+  </div>
+
+  <script src="js/utils/api.js"></script>
+  <script src="js/utils/sse.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
