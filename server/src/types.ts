@@ -1,33 +1,38 @@
 export interface PlatformConfig {
-  id: string;
-  type: string;
   enabled: boolean;
-  apiKey?: string;
-  metadata?: Record<string, any>;
+  agentsDir?: string;
+  skillsDir?: string;
+  color?: string;
 }
 
 export interface ServiceConfig {
-  id: string;
-  type: string;
+  url: string;
   enabled: boolean;
-  url?: string;
-  apiKey?: string;
 }
 
 export interface Config {
   server: {
     port: number;
     host: string;
+    name: string;
+    version: string;
+    apiKey: string | null;
     corsOrigin: string;
   };
   paths: {
-    agencyAgentsRepo: string;
-    inboxDir: string;
-    reportsDir: string;
-    statusDir: string;
+    agencyAgents: string;
+    inbox: string;
+    reports: string;
+    skills: string;
+    status: string;
+    decisions: string;
   };
-  platforms: PlatformConfig[];
-  services: ServiceConfig[];
+  platforms: Record<string, PlatformConfig>;
+  services: Record<string, ServiceConfig>;
+  inbox: {
+    autoArchiveDays: number;
+    maxRetries: number;
+  };
 }
 
 export interface AgentCard {

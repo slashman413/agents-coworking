@@ -5,10 +5,13 @@ import type { Config } from '../types.js';
 import type { Store } from '../core/store.js';
 import type { EventBus } from '../core/events.js';
 
-export function createMcpServer(config: Config, store: Store, eventBus: EventBus) {
+// Stateless streamable-HTTP pattern: build a fresh McpServer + transport per
+// request. Sharing one McpServer across concurrent transports cross-wires
+// responses (the SDK binds a server instance to a single transport).
+function buildServer(config: Config, store: Store, eventBus: EventBus): McpServer {
   const server = new McpServer({
-    name: 'Multi-Agent Cowork Server',
-    version: '1.0.0'
+    name: config.server.name || 'Multi-Agent Cowork Server',
+    version: config.server.version || '1.0.0'
   });
 
   // 1. register_agent
@@ -269,13 +272,21 @@ export function createMcpServer(config: Config, store: Store, eventBus: EventBus
     }
   );
 
+  return server;
+}
+
+export function createMcpServer(config: Config, store: Store, eventBus: EventBus) {
   const handleRequest = async (req: any, res: any) => {
+    const server = buildServer(config, store, eventBus);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on('close', () => { transport.close(); });
+    res.on('close', () => {
+      transport.close();
+      server.close();
+    });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   };
-  
+
   const handleSSE = async (req: any, res: any) => {
     await handleRequest(req, res);
   };

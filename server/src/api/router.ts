@@ -27,7 +27,24 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
 
   router.post('/inbox', (req, res) => {
     try {
-      const task = store.createTask(req.body);
+      const body = req.body || {};
+      // Minimal shape validation — tasks are persisted as-is to disk and every
+      // later read assumes these fields exist.
+      if (typeof body.title !== 'string' || !body.title.trim()) throw new Error('title (string) is required');
+      if (typeof body.description !== 'string') throw new Error('description (string) is required');
+      if (!body.from || typeof body.from.platform !== 'string' || typeof body.from.agent !== 'string') {
+        throw new Error('from.platform and from.agent (strings) are required');
+      }
+      const task = store.createTask({
+        title: body.title,
+        description: body.description,
+        from: { platform: body.from.platform, agent: body.from.agent },
+        to: { platform: body.to?.platform, agent: body.to?.agent },
+        priority: ['low', 'normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal',
+        skill: body.skill,
+        context: body.context,
+        tags: Array.isArray(body.tags) ? body.tags : undefined
+      });
       res.status(201).json(task);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -88,10 +105,10 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
   router.get('/config', (req, res) => {
     const config = (store as any).config;
     const sanitized = JSON.parse(JSON.stringify(config));
-    
-    sanitized.platforms = sanitized.platforms?.map((p: any) => ({ ...p, apiKey: undefined }));
-    sanitized.services = sanitized.services?.map((s: any) => ({ ...s, apiKey: undefined }));
-    
+
+    // Never leak the API key through the config endpoint
+    if (sanitized.server) sanitized.server.apiKey = sanitized.server.apiKey ? '***' : null;
+
     res.json(sanitized);
   });
 

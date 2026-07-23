@@ -6,6 +6,8 @@ import type { Config } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+// src/ and dist/ both sit one level under server/, so ../../ is the repo root
+// (where config.json lives) from either runtime.
 const rootDir = path.resolve(__dirname, '../../');
 
 function expandHome(filepath: string): string {
@@ -25,18 +27,27 @@ function resolvePath(filepath: string): string {
 
 const defaultConfig: Config = {
   server: {
-    port: 3000,
+    port: 4200,
     host: '127.0.0.1',
+    name: 'cowork-mcp',
+    version: '1.0.0',
+    apiKey: null,
     corsOrigin: '*'
   },
   paths: {
-    agencyAgentsRepo: './agency-agents',
-    inboxDir: './inbox',
-    reportsDir: './reports',
-    statusDir: './.status'
+    agencyAgents: '../agency-agents',
+    inbox: './inbox',
+    reports: './reports',
+    skills: './skills',
+    status: './.status',
+    decisions: './decisions'
   },
-  platforms: [],
-  services: []
+  platforms: {},
+  services: {},
+  inbox: {
+    autoArchiveDays: 30,
+    maxRetries: 3
+  }
 };
 
 export function loadConfig(): Config {
@@ -57,14 +68,23 @@ export function loadConfig(): Config {
   const config: Config = {
     server: { ...defaultConfig.server, ...(loadedConfig.server || {}) },
     paths: { ...defaultConfig.paths, ...(loadedConfig.paths || {}) },
-    platforms: loadedConfig.platforms || [],
-    services: loadedConfig.services || []
+    platforms: loadedConfig.platforms || {},
+    services: loadedConfig.services || {},
+    inbox: { ...defaultConfig.inbox, ...(loadedConfig.inbox || {}) }
   };
 
-  config.paths.agencyAgentsRepo = resolvePath(config.paths.agencyAgentsRepo);
-  config.paths.inboxDir = resolvePath(config.paths.inboxDir);
-  config.paths.reportsDir = resolvePath(config.paths.reportsDir);
-  config.paths.statusDir = resolvePath(config.paths.statusDir);
+  // COWORK_API_KEY env var overrides config (keeps the secret out of git)
+  if (process.env.COWORK_API_KEY) {
+    config.server.apiKey = process.env.COWORK_API_KEY;
+  }
+  if (process.env.COWORK_PORT) {
+    const p = parseInt(process.env.COWORK_PORT, 10);
+    if (Number.isFinite(p) && p > 0) config.server.port = p;
+  }
+
+  for (const key of Object.keys(config.paths) as (keyof Config['paths'])[]) {
+    config.paths[key] = resolvePath(config.paths[key]);
+  }
 
   return config;
 }

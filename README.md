@@ -25,7 +25,7 @@ pane of glass.
 
 - **Node.js** ≥ 20 (tested with v22)
 - **npm** ≥ 10
-- The [agency-agents](../github/slashman413/agency-agents) repo cloned locally
+- The [agency-agents](../agency-agents) repo cloned locally
 
 ### 1. Install Dependencies
 
@@ -48,7 +48,7 @@ Edit `agents-coworking/config.json` to match your environment:
     "apiKey": null          // ← Set a string to require API key auth, or null for open
   },
   "paths": {
-    "agencyAgents": "../github/slashman413/agency-agents",  // ← Path to agency-agents repo
+    "agencyAgents": "../agency-agents",  // ← Path to agency-agents repo
     "inbox": "./inbox",
     "reports": "./reports",
     "skills": "./skills",
@@ -68,7 +68,7 @@ Edit `agents-coworking/config.json` to match your environment:
 | `server.port` | `4200` | HTTP port for MCP endpoint + Web UI |
 | `server.host` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
 | `server.apiKey` | `null` | API key for authentication (null = no auth) |
-| `paths.agencyAgents` | `../github/slashman413/agency-agents` | Path to the agency-agents repo |
+| `paths.agencyAgents` | `../agency-agents` | Path to the agency-agents repo |
 | `platforms.*.enabled` | `true` | Enable/disable individual platforms |
 | `platforms.*.agentsDir` | varies | Where platform-specific agents live on disk |
 | `services.*.enabled` | `false` | Enable/disable service health monitoring |
@@ -319,7 +319,7 @@ curl -X POST http://localhost:4200/mcp \
     "apiKey": null
   },
   "paths": {
-    "agencyAgents": "../github/slashman413/agency-agents",
+    "agencyAgents": "../agency-agents",
     "inbox": "./inbox",
     "reports": "./reports",
     "skills": "./skills",

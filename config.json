@@ -7,7 +7,7 @@
     "apiKey": null
   },
   "paths": {
-    "agencyAgents": "../github/slashman413/agency-agents",
+    "agencyAgents": "../agency-agents",
     "inbox": "./inbox",
     "reports": "./reports",
     "skills": "./skills",

@@ -1,0 +1,18 @@
+[Unit]
+Description=Multi-Agent Cowork MCP Server (dashboard + task inbox on :4200)
+After=network.target
+
+[Service]
+Type=simple
+Environment=PATH=/home/wayne/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+WorkingDirectory=/home/wayne/workspace/github/slashman413/agents-coworking/server
+ExecStart=/home/wayne/.local/bin/node dist/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cowork-mcp
+
+[Install]
+WantedBy=default.target

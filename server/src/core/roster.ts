@@ -33,7 +33,12 @@ export class Roster {
       }
     }
 
-    const agentFiles = globSync('**/*.md', { cwd: this.repoPath, ignore: ['README.md', 'docs/**'] });
+    // Agents live in division subdirectories; top-level *.md are repo docs
+    // (README, SECURITY, CONTRIBUTING, …) and examples/ holds sample output.
+    const agentFiles = globSync('*/**/*.md', {
+      cwd: this.repoPath,
+      ignore: ['docs/**', 'examples/**', 'scripts/**', '**/README.md']
+    });
     
     for (const file of agentFiles) {
       const fullPath = path.join(this.repoPath, file);

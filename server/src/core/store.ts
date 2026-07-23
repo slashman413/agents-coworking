@@ -17,14 +17,16 @@ export class Store {
   constructor(config: Config, eventBus: EventBus) {
     this.config = config;
     this.eventBus = eventBus;
-    this.roster = new Roster(config.paths.agencyAgentsRepo);
+    this.roster = new Roster(config.paths.agencyAgents);
   }
 
   public initialize(): void {
     const dirs = [
-      this.config.paths.inboxDir,
-      this.config.paths.reportsDir,
-      this.config.paths.statusDir
+      this.config.paths.inbox,
+      this.config.paths.reports,
+      this.config.paths.status,
+      this.config.paths.skills,
+      this.config.paths.decisions
     ];
 
     for (const dir of dirs) {
@@ -38,7 +40,7 @@ export class Store {
   }
 
   private loadActiveAgents(): void {
-    const agentsFile = path.join(this.config.paths.statusDir, 'agents.json');
+    const agentsFile = path.join(this.config.paths.status, 'agents.json');
     if (fs.existsSync(agentsFile)) {
       try {
         const data = JSON.parse(fs.readFileSync(agentsFile, 'utf-8'));
@@ -54,7 +56,7 @@ export class Store {
   }
 
   private saveActiveAgents(): void {
-    const agentsFile = path.join(this.config.paths.statusDir, 'agents.json');
+    const agentsFile = path.join(this.config.paths.status, 'agents.json');
     const data = Array.from(this.activeAgents.values());
     fs.writeFileSync(agentsFile, JSON.stringify(data, null, 2));
   }
@@ -129,7 +131,7 @@ export class Store {
       createdAt: new Date().toISOString()
     };
     
-    const taskPath = path.join(this.config.paths.inboxDir, `${id}.json`);
+    const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
     
     this.eventBus.emitTaskCreated(task);
@@ -144,7 +146,7 @@ export class Store {
     task.claimedAt = new Date().toISOString();
     task.claimedBy = params.agentId;
     
-    const taskPath = path.join(this.config.paths.inboxDir, `${task.id}.json`);
+    const taskPath = path.join(this.config.paths.inbox, `${task.id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
     
     this.eventBus.emitTaskClaimed(task, params.agentId);
@@ -160,7 +162,7 @@ export class Store {
     if (params.result) task.result = params.result;
     if (params.reportPath) task.reportPath = params.reportPath;
     
-    const taskPath = path.join(this.config.paths.inboxDir, `${task.id}.json`);
+    const taskPath = path.join(this.config.paths.inbox, `${task.id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
     
     this.eventBus.emitTaskCompleted(task);
@@ -168,7 +170,7 @@ export class Store {
   }
 
   public getTask(id: string): Task | null {
-    const taskPath = path.join(this.config.paths.inboxDir, `${id}.json`);
+    const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     if (fs.existsSync(taskPath)) {
       try {
         return JSON.parse(fs.readFileSync(taskPath, 'utf-8')) as Task;
@@ -180,12 +182,12 @@ export class Store {
   }
 
   public listTasks(filters?: { status?: string; platform?: string; agent?: string; limit?: number }): Task[] {
-    const taskFiles = globSync('*.json', { cwd: this.config.paths.inboxDir });
+    const taskFiles = globSync('*.json', { cwd: this.config.paths.inbox });
     let tasks: Task[] = [];
     
     for (const file of taskFiles) {
       try {
-        const fullPath = path.join(this.config.paths.inboxDir, file);
+        const fullPath = path.join(this.config.paths.inbox, file);
         const task = JSON.parse(fs.readFileSync(fullPath, 'utf-8')) as Task;
         tasks.push(task);
       } catch (e) {
@@ -197,8 +199,9 @@ export class Store {
     tasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     if (filters?.status) tasks = tasks.filter(t => t.status === filters.status);
-    if (filters?.platform) tasks = tasks.filter(t => t.to.platform === filters.platform || (!t.to.platform && t.from.platform === filters.platform));
-    if (filters?.agent) tasks = tasks.filter(t => t.to.agent === filters.agent || t.claimedBy === filters.agent);
+    // Guard t.to / t.from — task files are plain JSON on disk and may be malformed
+    if (filters?.platform) tasks = tasks.filter(t => t.to?.platform === filters.platform || (!t.to?.platform && t.from?.platform === filters.platform));
+    if (filters?.agent) tasks = tasks.filter(t => t.to?.agent === filters.agent || t.claimedBy === filters.agent);
     
     if (filters?.limit && filters.limit > 0) {
       tasks = tasks.slice(0, filters.limit);
@@ -226,7 +229,7 @@ export class Store {
     
     const fileContent = matter.stringify(params.content, frontmatter);
     const fileName = `${id}.md`;
-    const filePath = path.join(this.config.paths.reportsDir, fileName);
+    const filePath = path.join(this.config.paths.reports, fileName);
     
     fs.writeFileSync(filePath, fileContent);
     
@@ -247,7 +250,7 @@ export class Store {
   }
 
   public getReport(id: string): Report | null {
-    const filePath = path.join(this.config.paths.reportsDir, `${id}.md`);
+    const filePath = path.join(this.config.paths.reports, `${id}.md`);
     if (fs.existsSync(filePath)) {
       try {
         const content = fs.readFileSync(filePath, 'utf-8');
@@ -265,12 +268,12 @@ export class Store {
   }
 
   public listReports(filters?: { type?: string; platform?: string; limit?: number }): Report[] {
-    const reportFiles = globSync('*.md', { cwd: this.config.paths.reportsDir });
+    const reportFiles = globSync('*.md', { cwd: this.config.paths.reports });
     let reports: Report[] = [];
     
     for (const file of reportFiles) {
       try {
-        const fullPath = path.join(this.config.paths.reportsDir, file);
+        const fullPath = path.join(this.config.paths.reports, file);
         const content = fs.readFileSync(fullPath, 'utf-8');
         const parsed = matter(content);
         reports.push({
@@ -286,7 +289,7 @@ export class Store {
     reports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
     if (filters?.type) reports = reports.filter(r => r.type === filters.type);
-    if (filters?.platform) reports = reports.filter(r => r.author.platform === filters.platform);
+    if (filters?.platform) reports = reports.filter(r => r.author?.platform === filters.platform);
     
     if (filters?.limit && filters.limit > 0) {
       reports = reports.slice(0, filters.limit);
@@ -319,13 +322,13 @@ export class Store {
     const recentReports = this.listReports({ limit: 5 }).length;
     
     const platformStatus: Record<string, boolean> = {};
-    for (const p of this.config.platforms) {
-      platformStatus[p.id] = p.enabled;
+    for (const [id, p] of Object.entries(this.config.platforms)) {
+      platformStatus[id] = p.enabled;
     }
-    
+
     const serviceStatus: Record<string, boolean> = {};
-    for (const s of this.config.services) {
-      serviceStatus[s.id] = s.enabled;
+    for (const [id, s] of Object.entries(this.config.services)) {
+      serviceStatus[id] = s.enabled;
     }
     
     return {
