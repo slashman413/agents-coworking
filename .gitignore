@@ -3,3 +3,6 @@ dist/
 .status/agents.json
 *.log
 .DS_Store
+inbox/*.json
+reports/*.md
+decisions/*.md
