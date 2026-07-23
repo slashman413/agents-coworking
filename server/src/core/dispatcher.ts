@@ -23,7 +23,7 @@ export class Dispatcher {
   private config: Config;
   private store: Store;
   private eventBus: EventBus;
-  private running = new Map<string, { role: string; startedAt: number }>();
+  private running = new Map<string, { role: string; startedAt: number; workerAgentId?: string }>();
   private agentId: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
@@ -42,8 +42,10 @@ export class Dispatcher {
     }
     // Drop ghost registrations from previous service runs — there is exactly
     // one dispatcher per server process.
-    for (const a of this.store.getActiveAgents({ platform: 'cowork' })) {
-      if (a.agentName === 'dispatcher') this.store.removeAgent(a.id);
+    for (const a of this.store.getActiveAgents()) {
+      if ((a.platform === 'cowork' && a.agentName === 'dispatcher') || a.sessionId === 'dispatcher-worker') {
+        this.store.removeAgent(a.id);
+      }
     }
     // Handover: reclaim tasks a previous dispatcher run claimed but never
     // finished (service restart / crash mid-execution). context.dispatched
@@ -95,12 +97,17 @@ export class Dispatcher {
     const orch = this.config.orchestration;
     if (this.running.size >= orch.maxConcurrent) return;
 
-    // heartbeat keeps the dispatcher visible on the dashboard
+    // heartbeat keeps the dispatcher and its live workers visible on the dashboard
     this.store.updateHeartbeat({
       agentId: this.agentId,
       status: this.running.size > 0 ? 'working' : 'idle',
       currentTask: Array.from(this.running.keys()).join(', ') || undefined
     });
+    for (const r of this.running.values()) {
+      if (r.workerAgentId) {
+        this.store.updateHeartbeat({ agentId: r.workerAgentId, status: 'working' });
+      }
+    }
 
     // FIFO: listTasks sorts newest-first; dispatch oldest first so pipelines
     // (research -> synthesis) run in creation order.
@@ -193,7 +200,21 @@ export class Dispatcher {
     claimed.context = { ...(claimed.context || {}), dispatched: true };
     this.store.saveTask(claimed);
 
-    this.running.set(task.id, { role, startedAt: Date.now() });
+    // Surface the worker as its own active agent so the dashboard shows WHO
+    // is working (e.g. hermes/planner (Qwen3.6-35B-A3B-NVFP4)), not just the
+    // dispatcher. Deregistered when the run ends.
+    const modelShort = (roleCfg.model || 'default').split('/').pop()!.split(':').pop()!;
+    const workerPlatform = roleCfg.exec === 'claude' ? 'claude' : roleCfg.exec === 'agy' ? 'antigravity' : 'hermes';
+    const worker = this.store.registerAgent({
+      platform: workerPlatform,
+      agentName: `${role} (${modelShort})`,
+      sessionId: 'dispatcher-worker',
+      capabilities: [role],
+      currentTask: task.title
+    });
+    this.store.updateHeartbeat({ agentId: worker.id, status: 'working', currentTask: task.title });
+
+    this.running.set(task.id, { role, startedAt: Date.now(), workerAgentId: worker.id });
     console.log(`Dispatcher: [${role}/${roleCfg.exec}:${roleCfg.model || 'default'}] running task ${task.id} — ${task.title}`);
 
     const prompt = this.buildPrompt(task, role);
@@ -224,6 +245,7 @@ export class Dispatcher {
     });
 
     this.running.delete(task.id);
+    this.store.removeAgent(worker.id);
 
     // Full transcript as a report; trimmed result on the task itself.
     // Report filing must never lose the result — if it throws, complete anyway.
