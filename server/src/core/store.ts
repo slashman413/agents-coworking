@@ -108,6 +108,12 @@ export class Store {
     return agents;
   }
 
+  public removeAgent(id: string): boolean {
+    const existed = this.activeAgents.delete(id);
+    if (existed) this.saveActiveAgents();
+    return existed;
+  }
+
   public removeStaleAgents(timeoutMs: number): void {
     const now = Date.now();
     let changed = false;

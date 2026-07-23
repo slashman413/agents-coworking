@@ -40,6 +40,11 @@ export class Dispatcher {
       console.log('Dispatcher: disabled (orchestration.enabled = false)');
       return;
     }
+    // Drop ghost registrations from previous service runs — there is exactly
+    // one dispatcher per server process.
+    for (const a of this.store.getActiveAgents({ platform: 'cowork' })) {
+      if (a.agentName === 'dispatcher') this.store.removeAgent(a.id);
+    }
     const agent = this.store.registerAgent({
       platform: 'cowork',
       agentName: 'dispatcher',
