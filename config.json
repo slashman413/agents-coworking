@@ -40,5 +40,23 @@
   "inbox": {
     "autoArchiveDays": 30,
     "maxRetries": 3
+  },
+  "orchestration": {
+    "enabled": true,
+    "maxConcurrent": 2,
+    "pollIntervalMs": 5000,
+    "taskTimeoutMs": 1800000,
+    "defaultRole": "generalist",
+    "roles": {
+      "orchestrator": { "exec": "claude", "model": "claude-fable-5" },
+      "engineer": { "exec": "claude", "model": "claude-opus-4-8" },
+      "engineer-local": { "exec": "hermes", "model": "deepseek-v4-flash" },
+      "planner": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
+      "researcher": { "exec": "hermes", "model": "nvidia/Qwen3.6-27B-NVFP4" },
+      "sales": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
+      "marketing": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
+      "generalist": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
+      "antigravity": { "exec": "agy", "model": "" }
+    }
   }
 }

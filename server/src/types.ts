@@ -10,6 +10,20 @@ export interface ServiceConfig {
   enabled: boolean;
 }
 
+export interface RoleConfig {
+  exec: 'claude' | 'hermes' | 'agy';
+  model: string;
+}
+
+export interface OrchestrationConfig {
+  enabled: boolean;
+  maxConcurrent: number;
+  pollIntervalMs: number;
+  taskTimeoutMs: number;
+  defaultRole: string;
+  roles: Record<string, RoleConfig>;
+}
+
 export interface Config {
   server: {
     port: number;
@@ -33,6 +47,7 @@ export interface Config {
     autoArchiveDays: number;
     maxRetries: number;
   };
+  orchestration: OrchestrationConfig;
 }
 
 export interface AgentCard {

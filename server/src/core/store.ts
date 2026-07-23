@@ -249,7 +249,7 @@ export class Store {
     return report;
   }
 
-  public getReport(id: string): Report | null {
+  public getReport(id: string): (Report & { content?: string }) | null {
     const filePath = path.join(this.config.paths.reports, `${id}.md`);
     if (fs.existsSync(filePath)) {
       try {
@@ -258,8 +258,9 @@ export class Store {
         return {
           ...parsed.data,
           filePath,
-          summary: parsed.content.substring(0, 200) + (parsed.content.length > 200 ? '...' : '')
-        } as Report;
+          summary: parsed.content.substring(0, 200) + (parsed.content.length > 200 ? '...' : ''),
+          content: parsed.content
+        } as Report & { content: string };
       } catch (e) {
         console.error(`Failed to parse report ${id}`, e);
       }

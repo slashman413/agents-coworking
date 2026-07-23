@@ -4,6 +4,7 @@ import fs from 'fs';
 import { loadConfig } from './config.js';
 import { EventBus } from './core/events.js';
 import { Store } from './core/store.js';
+import { Dispatcher } from './core/dispatcher.js';
 import { createMcpServer } from './mcp/server.js';
 import { createApiRouter } from './api/router.js';
 import { createSSEHandler } from './api/sse.js';
@@ -87,10 +88,22 @@ async function main() {
     store.removeStaleAgents(600000);
   }, 300000);
 
+  // Dispatcher: executes role-tagged inbox tasks by spawning platform CLIs
+  const dispatcher = new Dispatcher(config, store, eventBus);
+  dispatcher.start();
+  app.get('/api/dispatcher', (_req, res) => {
+    res.json({
+      enabled: config.orchestration.enabled,
+      roles: Object.fromEntries(Object.entries(config.orchestration.roles).map(([k, v]) => [k, `${v.exec}:${v.model || 'default'}`])),
+      running: dispatcher.getRunning()
+    });
+  });
+
   // Graceful shutdown for systemd (SIGTERM) and Ctrl-C (SIGINT)
   const shutdown = (signal: string) => {
     console.log(`${signal} received, shutting down...`);
     clearInterval(cleanup);
+    dispatcher.stop();
     httpServer.close(() => process.exit(0));
     // Open SSE connections keep the server alive — force-exit after 3s
     setTimeout(() => process.exit(0), 3000).unref();

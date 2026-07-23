@@ -156,6 +156,47 @@ MCP can connect to `http://localhost:4200/mcp`.
 
 ---
 
+## Task Execution — the Dispatcher
+
+The server includes a **dispatcher** that turns queued tasks into real agent runs.
+Any inbox task carrying a role (`context.role`, a matching tag, or `skill`) is
+claimed automatically and executed by spawning the mapped platform CLI headlessly.
+Output becomes the task `result`; the full transcript is filed as a report.
+
+Role → model mapping (`config.json` → `orchestration.roles`):
+
+| Role | Executor | Model |
+|------|----------|-------|
+| `orchestrator` | Claude Code | claude-fable-5 — decomposes CEO ideas into role-tagged subtasks |
+| `engineer` | Claude Code | claude-opus-4-8 |
+| `engineer-local` | Hermes | deepseek-v4-flash |
+| `planner` | Hermes | Qwen3.6-35B-A3B-NVFP4 (local vLLM :8000) |
+| `researcher` | Hermes | Qwen3.6-27B-NVFP4 (local vLLM :8001) |
+| `sales`, `marketing`, `generalist` | Hermes | Qwen3.6-35B-A3B-NVFP4 |
+| `antigravity` | AGY CLI | account default |
+
+CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates a task with
+`context.role: "orchestrator"` → the Fable-5 orchestrator decomposes it into
+role-tagged subtasks via `POST /api/inbox` → the dispatcher fans them out to the
+right models → results and full reports appear live on the dashboard.
+
+Tasks **without** a role are left untouched (for live interactive agents); tag a
+task `manual` to always skip dispatch. Dispatcher status: `GET /api/dispatcher`.
+Tune `orchestration.maxConcurrent` / `taskTimeoutMs` / `pollIntervalMs` in config.
+
+## Deployment (systemd) & Remote Access
+
+```bash
+cp deploy/cowork-mcp.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now cowork-mcp
+```
+
+With `server.host: "0.0.0.0"` the dashboard is reachable from other machines at
+`http://<host-ip>:4200/` (LAN or Tailscale IP — `0.0.0.0` itself is a bind
+address, not a URL). Set `server.apiKey` (or `COWORK_API_KEY`) if the host is
+reachable beyond trusted networks.
+
 ## MCP Tools Reference
 
 Once connected, agents have access to these tools:

@@ -47,6 +47,14 @@ const defaultConfig: Config = {
   inbox: {
     autoArchiveDays: 30,
     maxRetries: 3
+  },
+  orchestration: {
+    enabled: false,
+    maxConcurrent: 2,
+    pollIntervalMs: 5000,
+    taskTimeoutMs: 1800000,
+    defaultRole: 'generalist',
+    roles: {}
   }
 };
 
@@ -70,7 +78,12 @@ export function loadConfig(): Config {
     paths: { ...defaultConfig.paths, ...(loadedConfig.paths || {}) },
     platforms: loadedConfig.platforms || {},
     services: loadedConfig.services || {},
-    inbox: { ...defaultConfig.inbox, ...(loadedConfig.inbox || {}) }
+    inbox: { ...defaultConfig.inbox, ...(loadedConfig.inbox || {}) },
+    orchestration: {
+      ...defaultConfig.orchestration,
+      ...(loadedConfig.orchestration || {}),
+      roles: loadedConfig.orchestration?.roles || {}
+    }
   };
 
   // COWORK_API_KEY env var overrides config (keeps the secret out of git)
