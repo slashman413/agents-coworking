@@ -32,10 +32,22 @@
     }
   },
   "services": {
-    "vllm35b": { "url": "http://localhost:8000/v1", "enabled": false },
-    "vllm27b": { "url": "http://localhost:8001/v1", "enabled": false },
-    "firecrawl": { "url": "http://localhost:3002", "enabled": false },
-    "twseMcp": { "url": "http://localhost:8082/mcp", "enabled": false }
+    "vllm35b": {
+      "url": "http://localhost:8000/v1",
+      "enabled": false
+    },
+    "vllm27b": {
+      "url": "http://localhost:8001/v1",
+      "enabled": false
+    },
+    "firecrawl": {
+      "url": "http://localhost:3002",
+      "enabled": false
+    },
+    "twseMcp": {
+      "url": "http://localhost:8082/mcp",
+      "enabled": false
+    }
   },
   "inbox": {
     "autoArchiveDays": 30,
@@ -48,16 +60,52 @@
     "taskTimeoutMs": 1800000,
     "defaultRole": "generalist",
     "roles": {
-      "orchestrator": { "exec": "claude", "model": "claude-opus-4-8" },
-      "orchestrator-fable": { "exec": "claude", "model": "claude-fable-5" },
-      "engineer": { "exec": "claude", "model": "claude-opus-4-8" },
-      "engineer-local": { "exec": "hermes", "model": "deepseek-v4-flash" },
-      "planner": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
-      "researcher": { "exec": "hermes", "model": "nvidia/Qwen3.6-27B-NVFP4" },
-      "sales": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
-      "marketing": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
-      "generalist": { "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
-      "antigravity": { "exec": "agy", "model": "" }
+      "orchestrator": {
+        "exec": "claude",
+        "model": "claude-opus-4-8"
+      },
+      "orchestrator-fable": {
+        "exec": "claude",
+        "model": "claude-fable-5"
+      },
+      "engineer": {
+        "exec": "claude",
+        "model": "claude-opus-4-8",
+        "fallback": "engineer-local"
+      },
+      "engineer-local": {
+        "exec": "hermes",
+        "model": "deepseek:deepseek-v4-flash",
+        "fallback": "generalist"
+      },
+      "planner": {
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "fallback": "generalist"
+      },
+      "researcher": {
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-27B-NVFP4",
+        "fallback": "generalist"
+      },
+      "sales": {
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "fallback": "generalist"
+      },
+      "marketing": {
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "fallback": "generalist"
+      },
+      "generalist": {
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4"
+      },
+      "antigravity": {
+        "exec": "agy",
+        "model": ""
+      }
     }
   }
 }

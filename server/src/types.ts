@@ -13,6 +13,8 @@ export interface ServiceConfig {
 export interface RoleConfig {
   exec: 'claude' | 'hermes' | 'agy';
   model: string;
+  /** Role to hand the task to after a failed attempt (see Dispatcher handover). */
+  fallback?: string;
 }
 
 export interface OrchestrationConfig {

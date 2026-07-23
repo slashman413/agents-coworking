@@ -45,6 +45,19 @@ export class Dispatcher {
     for (const a of this.store.getActiveAgents({ platform: 'cowork' })) {
       if (a.agentName === 'dispatcher') this.store.removeAgent(a.id);
     }
+    // Handover: reclaim tasks a previous dispatcher run claimed but never
+    // finished (service restart / crash mid-execution). context.dispatched
+    // marks dispatcher-owned claims, so live interactive agents' claims are
+    // never touched.
+    for (const t of this.store.listTasks()) {
+      if ((t.status === 'in-progress' || t.status === 'claimed') && t.context?.dispatched) {
+        t.status = 'pending';
+        delete t.claimedAt;
+        delete t.claimedBy;
+        this.store.saveTask(t);
+        console.log(`Dispatcher: handover — reclaimed orphaned task ${t.id} (${t.title})`);
+      }
+    }
     const agent = this.store.registerAgent({
       platform: 'cowork',
       agentName: 'dispatcher',
@@ -176,6 +189,9 @@ export class Dispatcher {
 
     const claimed = this.store.claimTask({ taskId: task.id, agentId: this.agentId });
     if (!claimed) return;
+    // Mark the claim as dispatcher-owned so startup handover can reclaim it
+    claimed.context = { ...(claimed.context || {}), dispatched: true };
+    this.store.saveTask(claimed);
 
     this.running.set(task.id, { role, startedAt: Date.now() });
     console.log(`Dispatcher: [${role}/${roleCfg.exec}:${roleCfg.model || 'default'}] running task ${task.id} — ${task.title}`);
@@ -209,22 +225,50 @@ export class Dispatcher {
 
     this.running.delete(task.id);
 
-    // Full transcript as a report; trimmed result on the task itself
-    const report = this.store.fileReport({
-      title: `[${role}] ${task.title}`,
-      type: 'task-output',
-      author_platform: roleCfg.exec === 'claude' ? 'claude' : roleCfg.exec === 'agy' ? 'antigravity' : 'hermes',
-      author_agent: `${role} (${roleCfg.model || 'default'})`,
-      content: output.text,
-      status: output.ok ? 'final' : 'draft',
-      tags: [role, 'dispatcher', output.ok ? 'success' : 'failed']
-    });
+    // Full transcript as a report; trimmed result on the task itself.
+    // Report filing must never lose the result — if it throws, complete anyway.
+    let report: { id: string; filePath: string } | null = null;
+    try {
+      report = this.store.fileReport({
+        title: `[${role}] ${task.title}`,
+        type: 'task-output',
+        author_platform: roleCfg.exec === 'claude' ? 'claude' : roleCfg.exec === 'agy' ? 'antigravity' : 'hermes',
+        author_agent: `${role} (${roleCfg.model || 'default'})`,
+        content: output.text,
+        status: output.ok ? 'final' : 'draft',
+        tags: [role, 'dispatcher', output.ok ? 'success' : 'failed']
+      });
+    } catch (e) {
+      console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
+    }
+
+    if (!output.ok) {
+      // Handover: retry up to inbox.maxRetries, downgrading to the role's
+      // fallback (if configured) on each failed attempt.
+      const fresh = this.store.getTask(task.id);
+      if (fresh) {
+        const attempts = (Number(fresh.context?.attempts) || 0) + 1;
+        const maxRetries = this.config.inbox.maxRetries;
+        if (attempts < maxRetries) {
+          const nextRole = roleCfg.fallback && this.config.orchestration.roles[roleCfg.fallback]
+            ? roleCfg.fallback : role;
+          fresh.status = 'pending';
+          delete fresh.claimedAt;
+          delete fresh.claimedBy;
+          fresh.context = { ...(fresh.context || {}), attempts, role: nextRole, dispatched: false };
+          fresh.result = `attempt ${attempts}/${maxRetries} failed as "${role}"${nextRole !== role ? ` — handed over to "${nextRole}"` : ' — retrying'}: ${output.text.slice(0, 300)}`;
+          this.store.saveTask(fresh);
+          console.log(`Dispatcher: handover — task ${task.id} attempt ${attempts} failed as ${role}, requeued as ${nextRole}`);
+          return;
+        }
+      }
+    }
 
     const result = output.ok
-      ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in report ${report.id})` : output.text
-      : `FAILED: ${output.text.slice(0, 1000)}`;
+      ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in report ${report?.id ?? 'n/a'})` : output.text
+      : `FAILED after ${this.config.inbox.maxRetries} attempts: ${output.text.slice(0, 1000)}`;
 
-    this.store.completeTask({ taskId: task.id, result, reportPath: report.filePath });
-    console.log(`Dispatcher: task ${task.id} ${output.ok ? 'completed' : 'FAILED'} (${output.text.length} chars)`);
+    this.store.completeTask({ taskId: task.id, result, reportPath: report?.filePath });
+    console.log(`Dispatcher: task ${task.id} ${output.ok ? 'completed' : 'FAILED (retries exhausted)'} (${output.text.length} chars)`);
   }
 }

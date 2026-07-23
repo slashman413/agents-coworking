@@ -175,6 +175,12 @@ export class Store {
     return task;
   }
 
+  /** Persist arbitrary task mutations (handover, retries). */
+  public saveTask(task: Task): void {
+    const taskPath = path.join(this.config.paths.inbox, `${task.id}.json`);
+    fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
+  }
+
   public getTask(id: string): Task | null {
     const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     if (fs.existsSync(taskPath)) {
@@ -233,7 +239,12 @@ export class Store {
       tags: params.tags || []
     };
     
-    const fileContent = matter.stringify(params.content, frontmatter);
+    // Serialize frontmatter separately and append the body verbatim.
+    // matter.stringify(content, …) PARSES the content for an existing
+    // frontmatter block first — agent output that happens to start with
+    // `---` (but isn't valid YAML) threw YAMLException and lost the report.
+    const fmBlock = matter.stringify('', frontmatter).trimEnd();
+    const fileContent = `${fmBlock}\n\n${params.content}\n`;
     const fileName = `${id}.md`;
     const filePath = path.join(this.config.paths.reports, fileName);
     
