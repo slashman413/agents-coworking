@@ -189,26 +189,33 @@ export class Dispatcher {
   }
 
   /** A remote brain in a chain is left pending for that machine's client to
-   *  claim — but if no client claims it within remoteGraceMs, advance to the
-   *  next brain so a clientless remote rung can't stall the task. A pinned
-   *  remote brain waits indefinitely (the CEO asked for that exact brain). */
+   *  claim. We PUBLISH the target brain onto `context.brain` (flagged
+   *  `brainAuto` so planFor doesn't treat it as a permanent user pin) — that is
+   *  the field the remote-brain client filters on to discover its tasks. If no
+   *  client claims it within remoteGraceMs, advance to the next brain so a
+   *  clientless remote rung can't stall the task. A pinned remote brain waits
+   *  indefinitely (the CEO asked for that exact brain). */
   private handleRemoteRung(task: Task, plan?: ExecPlan): void {
     if (!plan || plan.pinned) return;
     const grace = this.config.orchestration.remoteGraceMs ?? 0;
-    if (grace <= 0) return;
     const ctx = task.context || {};
     const since = Number(ctx.remoteWaitSince) || 0;
     const now = Date.now();
-    if (!since) {
+    // First offer: publish the target brain id so its client can find + claim it.
+    if (!since || ctx.brain !== plan.brainId) {
       const t = this.store.getTask(task.id);
-      if (t) { t.context = { ...(t.context || {}), remoteWaitSince: now }; this.store.saveTask(t); }
+      if (t) {
+        t.context = { ...(t.context || {}), brain: plan.brainId, brainAuto: true, remoteWaitSince: now };
+        this.store.saveTask(t);
+      }
       return;
     }
-    if (now - since > grace) {
+    // Unclaimed past the grace window → advance to the next brain in the chain.
+    if (grace > 0 && now - since > grace) {
       const t = this.store.getTask(task.id);
       if (t) {
         const attempts = (Number(t.context?.attempts) || 0) + 1;
-        t.context = { ...(t.context || {}), attempts, remoteWaitSince: undefined };
+        t.context = { ...(t.context || {}), attempts, remoteWaitSince: undefined, brain: undefined, brainAuto: undefined };
         this.store.saveTask(t);
         console.log(`Dispatcher: remote rung ${plan.brainId} unclaimed ${grace}ms — advancing task ${task.id} to next brain`);
       }
@@ -234,8 +241,11 @@ export class Dispatcher {
     const attempt = Number(task.context?.attempts) || 0;
 
     // (2) explicit brain pin — overrides the chain, retries the same brain.
+    //     `brainAuto` marks a brain the dispatcher itself published for a remote
+    //     chain rung (see handleRemoteRung); that is NOT a user pin, so let it
+    //     fall through to the chain logic below (which manages grace/handover).
     const ctxBrain = typeof task.context?.brain === 'string' ? task.context.brain : undefined;
-    if (ctxBrain && brains[ctxBrain]) {
+    if (ctxBrain && brains[ctxBrain] && !task.context?.brainAuto) {
       return this.brainPlan(agentName, division, ctxBrain, brains[ctxBrain], { pinned: true, attempt, chainLen: 0 });
     }
 
