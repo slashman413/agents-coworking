@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { loadConfig } from './config.js';
+import { loadConfig, persistRegistries } from './config.js';
 import { EventBus } from './core/events.js';
 import { Store } from './core/store.js';
 import { Dispatcher } from './core/dispatcher.js';
@@ -94,16 +94,68 @@ async function main() {
   app.get('/api/dispatcher', (_req, res) => {
     res.json({
       enabled: config.orchestration.enabled,
-      roles: Object.fromEntries(Object.entries(config.orchestration.roles).map(([k, v]) => [k, v.brain ? `→brain:${v.brain}` : `${v.exec}:${v.model || 'default'}`])),
+      agents: config.orchestration.agents || {},
       brains: config.orchestration.brains || {},
       running: dispatcher.getRunning()
     });
   });
 
-  // The brain registry — named execution identities (model×platform×location)
-  // that the orchestrator and remote clients can target via a task's context.brain.
-  app.get('/api/brains', (_req, res) => {
-    res.json(config.orchestration.brains || {});
+  // ── Agents registry (worker profiles with an ordered brain chain) ──────────
+  app.get('/api/agents-config', (_req, res) => res.json(config.orchestration.agents || {}));
+
+  app.put('/api/agents-config/:name', (req, res) => {
+    try {
+      const name = req.params.name;
+      const { description, brains } = req.body || {};
+      if (!Array.isArray(brains)) throw new Error('brains (string[]) is required');
+      const registry = config.orchestration.brains || {};
+      const bad = brains.filter((b: string) => !registry[b]);
+      if (bad.length) throw new Error(`unknown brain(s): ${bad.join(', ')}`);
+      config.orchestration.agents = config.orchestration.agents || {};
+      config.orchestration.agents[name] = { description: String(description || name), brains };
+      persistRegistries(config);
+      res.json({ ok: true, name, agent: config.orchestration.agents[name] });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.delete('/api/agents-config/:name', (req, res) => {
+    delete (config.orchestration.agents || {})[req.params.name];
+    persistRegistries(config);
+    res.json({ ok: true });
+  });
+
+  // ── Brain registry (model × platform × location) ───────────────────────────
+  app.get('/api/brains', (_req, res) => res.json(config.orchestration.brains || {}));
+
+  app.put('/api/brains/:id', (req, res) => {
+    try {
+      const id = req.params.id;
+      const { description, location, exec, model, command, host } = req.body || {};
+      if (location !== 'local' && location !== 'remote') throw new Error('location must be local|remote');
+      config.orchestration.brains = config.orchestration.brains || {};
+      config.orchestration.brains[id] = {
+        description: String(description || id), location,
+        ...(exec ? { exec } : {}), ...(model !== undefined ? { model } : {}),
+        ...(Array.isArray(command) ? { command } : {}), ...(host ? { host } : {})
+      };
+      persistRegistries(config);
+      res.json({ ok: true, id, brain: config.orchestration.brains[id] });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Deregister a brain — and CASCADE: strip it from every agent's chain so no
+  // agent is left pointing at a brain that no longer exists.
+  app.delete('/api/brains/:id', (req, res) => {
+    const id = req.params.id;
+    delete (config.orchestration.brains || {})[id];
+    let scrubbed = 0;
+    for (const a of Object.values(config.orchestration.agents || {})) {
+      const before = a.brains.length;
+      a.brains = a.brains.filter(b => b !== id);
+      if (a.brains.length !== before) scrubbed++;
+    }
+    persistRegistries(config);
+    res.json({ ok: true, id, agents_scrubbed: scrubbed });
   });
 
   // Graceful shutdown for systemd (SIGTERM) and Ctrl-C (SIGINT)

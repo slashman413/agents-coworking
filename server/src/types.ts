@@ -57,13 +57,28 @@ export interface ClassifierConfig {
   timeoutMs: number;
 }
 
+/**
+ * An agent is a named worker with a capability + an ORDERED list of brains.
+ * brains[0] is tried first; on failure the dispatcher hands the task to
+ * brains[1], then brains[2], … (the list is the fallback chain). Editable live
+ * from the dashboard's Agents view.
+ */
+export interface AgentConfig {
+  description: string;
+  brains: string[];
+}
+
 export interface OrchestrationConfig {
   enabled: boolean;
   maxConcurrent: number;
   pollIntervalMs: number;
   taskTimeoutMs: number;
   defaultRole: string;
-  roles: Record<string, RoleConfig>;
+  /** First-class agents, each with an ordered brain fallback chain. */
+  agents: Record<string, AgentConfig>;
+  /** Legacy role map (pre-agents). Read only if an agent of the same name is
+   *  absent; kept so old configs keep working. */
+  roles?: Record<string, RoleConfig>;
   /** Named execution identities (model×platform×location) the orchestrator can
    *  target via a task's context.brain. */
   brains?: Record<string, BrainConfig>;

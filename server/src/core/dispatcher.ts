@@ -3,16 +3,18 @@ import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store } from './store.js';
 
-/** A fully-resolved execution plan for one task: what to run, where it shows on
- *  the dashboard, and where to hand off if it fails. */
+/** A fully-resolved execution plan for one attempt of one task. */
 interface ExecPlan {
-  role: string;                 // semantic role driving the prompt ('' if none)
+  agent: string;                // agent/profile name driving the prompt ('' if none)
+  brainId: string;             // brain used this attempt
+  attempt: number;             // 0-based index into the agent's brain chain
+  chainLen: number;            // length of the agent's brain chain (0 if pinned)
+  pinned: boolean;             // context.brain override (retry same brain)
   label: string;                // worker display + logs
   platform: string;             // active-agent platform bucket
   exec: 'claude' | 'hermes' | 'agy' | 'script';
   model: string;
   command?: string[];
-  fallback?: { via: 'role' | 'brain'; id: string };
 }
 
 /**
@@ -77,15 +79,16 @@ export class Dispatcher {
         console.log(`Dispatcher: handover — reclaimed orphaned task ${t.id} (${t.title})`);
       }
     }
+    const agentNames = Object.keys(this.agents());
     const agent = this.store.registerAgent({
       platform: 'cowork',
       agentName: Dispatcher.COORDINATOR_NAME,
-      capabilities: Object.keys(orch.roles)
+      capabilities: agentNames
     });
     this.agentId = agent.id;
     this.timer = setInterval(() => this.tick(), orch.pollIntervalMs);
     const clsMsg = orch.classifier?.enabled ? `classifier ${orch.classifier.model}` : 'classifier off';
-    console.log(`Dispatcher: started (roles: ${Object.keys(orch.roles).join(', ')}; max ${orch.maxConcurrent} concurrent; ${clsMsg}; staleClaim ${orch.staleClaimMs ?? 0}ms)`);
+    console.log(`Dispatcher: started (agents: ${agentNames.join(', ')}; max ${orch.maxConcurrent} concurrent; ${clsMsg}; staleClaim ${orch.staleClaimMs ?? 0}ms)`);
   }
 
   public stop(): void {
@@ -97,16 +100,28 @@ export class Dispatcher {
     return Array.from(this.running.entries()).map(([taskId, r]) => ({ taskId, ...r }));
   }
 
-  private resolveRole(task: Task): string | null {
-    if (task.tags?.includes('manual')) return null;
-    const roles = this.config.orchestration.roles;
-    const ctxRole = task.context?.role;
-    if (typeof ctxRole === 'string' && roles[ctxRole]) return ctxRole;
-    for (const tag of task.tags || []) {
-      if (roles[tag]) return tag;
+  /** The agent registry (with a one-time fallback to legacy `roles` so old
+   *  configs without an `agents` block still resolve). */
+  private agents(): Record<string, { description: string; brains: string[] }> {
+    const orch = this.config.orchestration;
+    if (orch.agents && Object.keys(orch.agents).length) return orch.agents;
+    // Legacy shim: synthesize agents from roles (single-brain chain via inline model).
+    const out: Record<string, { description: string; brains: string[] }> = {};
+    for (const [name, r] of Object.entries(orch.roles || {})) {
+      out[name] = { description: name, brains: r.brain ? [r.brain] : [] };
     }
-    // task.skill may also name a role (create_task exposes it prominently)
-    if (task.skill && roles[task.skill]) return task.skill;
+    return out;
+  }
+
+  /** Resolve which agent (worker profile) a task belongs to. */
+  private resolveAgent(task: Task): string | null {
+    if (task.tags?.includes('manual')) return null;
+    const agents = this.agents();
+    const ctx = task.context || {};
+    const named = typeof ctx.agent === 'string' ? ctx.agent : typeof ctx.role === 'string' ? ctx.role : undefined;
+    if (named && agents[named]) return named;
+    for (const tag of task.tags || []) if (agents[tag]) return tag;
+    if (task.skill && agents[task.skill]) return task.skill;
     return null;
   }
 
@@ -150,49 +165,53 @@ export class Dispatcher {
   }
 
   /**
-   * Decide how a pending task should run. Resolution order:
-   *   1. `manual` tag                     -> skip
-   *   2. explicit `context.brain` (or the semantic role's `brain`) — a named
-   *      execution identity. LOCAL brain -> execute on it; REMOTE brain -> leave
-   *      in the inbox for that remote MCP client to claim.
-   *   3. semantic role (context.role / tag / skill) -> execute on the role
-   *   4. nothing -> classify (LLM assigns a role)
-   * The semantic role always drives the PROMPT; the brain (when set) only
-   * overrides WHERE/ON-WHAT it runs.
+   * Decide how a pending task should run.
+   *   1. `manual` tag                 -> skip
+   *   2. explicit `context.brain` pin -> run on exactly that brain (retries it)
+   *   3. an agent (context.agent/role / tag / skill) -> run on the agent's brain
+   *      CHAIN at index context.attempts; on failure the handover advances to
+   *      the next brain in the list. Brains registry says local (spawn here) or
+   *      remote (leave in inbox for that client).
+   *   4. nothing -> classify (LLM assigns an agent)
    */
   private planFor(task: Task): { action: 'skip' } | { action: 'remote' } | { action: 'classify' } | { action: 'execute'; exec: ExecPlan } {
     if (task.tags?.includes('manual')) return { action: 'skip' };
-    const roles = this.config.orchestration.roles;
     const brains = this.config.orchestration.brains || {};
-    const role = this.resolveRole(task) || '';
+    const agentName = this.resolveAgent(task) || '';
+    const attempt = Number(task.context?.attempts) || 0;
 
+    // (2) explicit brain pin — overrides the agent chain, retries the same brain.
     const ctxBrain = typeof task.context?.brain === 'string' ? task.context.brain : undefined;
-    const roleBrain = role && roles[role]?.brain;
-    const brainId = (ctxBrain && brains[ctxBrain]) ? ctxBrain : (roleBrain && brains[roleBrain]) ? roleBrain : undefined;
-
-    if (brainId) {
-      const b = brains[brainId];
-      if (b.location === 'remote') return { action: 'remote' };
-      if (!b.exec) return { action: 'skip' };
-      return { action: 'execute', exec: {
-        role, label: `${role || 'task'} · ${brainId}`, platform: this.platformOf(b.exec),
-        exec: b.exec, model: b.model || '', command: b.command,
-        fallback: b.fallback ? { via: 'brain', id: b.fallback } : undefined
-      } };
+    if (ctxBrain && brains[ctxBrain]) {
+      return this.brainPlan(agentName, ctxBrain, brains[ctxBrain], { pinned: true, attempt, chainLen: 0 });
     }
 
-    if (role) {
-      const r = roles[role];
-      const short = (r.model || 'default').split('/').pop()!.split(':').pop()!;
-      return { action: 'execute', exec: {
-        role, label: r.exec === 'script' ? `${role} (${r.model || 'pipeline'})` : `${role} (${short})`,
-        platform: this.platformOf(r.exec),
-        exec: r.exec, model: r.model, command: r.command,
-        fallback: r.fallback ? { via: 'role', id: r.fallback } : undefined
-      } };
+    // (3) agent brain chain.
+    if (agentName) {
+      const chain = this.agents()[agentName]?.brains || [];
+      if (!chain.length) return { action: 'skip' };
+      if (attempt >= chain.length) return { action: 'skip' };   // exhausted (handover already failed it)
+      const brainId = chain[attempt];
+      const b = brains[brainId];
+      if (!b) return { action: 'skip' };                        // misconfigured chain
+      return this.brainPlan(agentName, brainId, b, { pinned: false, attempt, chainLen: chain.length });
     }
 
     return { action: 'classify' };
+  }
+
+  private brainPlan(
+    agent: string, brainId: string, b: { location: string; exec?: string; model?: string; command?: string[] },
+    meta: { pinned: boolean; attempt: number; chainLen: number }
+  ): { action: 'remote' } | { action: 'skip' } | { action: 'execute'; exec: ExecPlan } {
+    if (b.location === 'remote') return { action: 'remote' };   // that machine's client claims it
+    if (!b.exec) return { action: 'skip' };
+    return { action: 'execute', exec: {
+      agent, brainId, attempt: meta.attempt, chainLen: meta.chainLen, pinned: meta.pinned,
+      label: `${agent || 'task'} · ${brainId}`,
+      platform: this.platformOf(b.exec),
+      exec: b.exec as ExecPlan['exec'], model: b.model || '', command: b.command
+    } };
   }
 
   private platformOf(exec: string): string {
@@ -249,22 +268,15 @@ export class Dispatcher {
     if (this.classifying.has(task.id)) return;
     this.classifying.add(task.id);
 
-    const roleList = Object.keys(this.config.orchestration.roles)
-      .filter(r => !r.startsWith('orchestrator'));
+    const agents = this.agents();
+    const candidates = Object.entries(agents).filter(([n]) => !n.startsWith('orchestrator'));
     const prompt =
-      `You are the DISPATCHER for a multi-agent company. Assign this task to ONE role.\n\n` +
+      `You are the DISPATCHER for a multi-agent company. Assign this task to ONE agent.\n\n` +
       `Task title: ${task.title}\n` +
       `Task description: ${task.description}\n\n` +
-      `Available roles:\n` +
-      `- engineer: writing/refactoring code, UI, technical implementation (premium)\n` +
-      `- engineer-local: writing/refactoring code, cheaper local model\n` +
-      `- planner: product planning, roadmaps, breaking work into steps\n` +
-      `- researcher: deep research, market/competitive analysis\n` +
-      `- sales: pricing, monetization, outreach\n` +
-      `- marketing: copy, campaigns, positioning, social\n` +
-      `- video: producing a short promo/shorts VIDEO (image+motion+music) via the ComfyUI pipeline\n` +
-      `- generalist: anything else\n\n` +
-      `Reply with ONLY the single role name from the list above. No other text.`;
+      `Available agents:\n` +
+      candidates.map(([n, a]) => `- ${n}: ${a.description}`).join('\n') + '\n\n' +
+      `Reply with ONLY the single agent name from the list above. No other text.`;
 
     const argv = this.buildArgv({ exec: cls.exec, model: cls.model }, prompt);
     const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -274,16 +286,13 @@ export class Dispatcher {
     child.on('error', () => { /* handled in close via empty out */ });
     child.on('close', () => {
       clearTimeout(timer);
-      const roles = this.config.orchestration.roles;
-      // Pick the last role name that appears in the output (models often
-      // preface the answer). Fall back if nothing matches.
-      // Prefer the most specific match (longest role name) so "engineer-local"
-      // wins over "engineer" when both appear.
-      const found = Object.keys(roles)
+      // Prefer the most specific match (longest agent name) so "engineer-local"
+      // wins over "engineer" when both appear in the output.
+      const found = Object.keys(agents)
         .filter(r => !r.startsWith('orchestrator') && new RegExp(`\\b${r}\\b`).test(out))
         .sort((a, b) => b.length - a.length);
       const chosen = found.length ? found[0]
-        : (roles[cls.fallbackRole] ? cls.fallbackRole : this.config.orchestration.defaultRole);
+        : (agents[cls.fallbackRole] ? cls.fallbackRole : this.config.orchestration.defaultRole);
       const fresh = this.store.getTask(task.id);
       if (fresh && fresh.status === 'pending') {
         fresh.context = { ...(fresh.context || {}), role: chosen, classifiedBy: cls.model };
@@ -335,7 +344,9 @@ export class Dispatcher {
         '```bash',
         `curl -s -X POST http://localhost:${port}/api/inbox -H 'Content-Type: application/json' -d '{"title":"...","description":"...(full standalone instructions)...","from":{"platform":"claude","agent":"orchestrator"},"to":{},"priority":"normal","context":{"role":"<role>"},"tags":["<role>"]}'`,
         '```',
-        `Available roles: engineer (Claude Opus — code), engineer-local (deepseek — code, cheaper), planner (product planning), researcher (deep research), sales, marketing, generalist, video (short promo/shorts video via the ComfyUI LTX pipeline).`,
+        `Available agents (assign one per subtask via context.role): ` +
+          Object.entries(this.agents()).filter(([n]) => !n.startsWith('orchestrator'))
+            .map(([n, a]) => `${n} (${a.description})`).join('; ') + '.',
         this.brainsPromptBlock(),
         `Each subtask description must be fully standalone — the executing agent sees ONLY that description.`,
         `If a subtask must wait for others (e.g. a final synthesis/integration step), add their task ids to its context: {"role":"planner","dependsOn":["<id1>","<id2>"]} — the API response to each POST gives you the created task's id. Dependent tasks are held until all dependencies are done, and their results are automatically shown to the dependent agent.`,
@@ -369,7 +380,7 @@ export class Dispatcher {
 
   private async execute(task: Task, plan: ExecPlan): Promise<void> {
     const orch = this.config.orchestration;
-    const role = plan.role;
+    const role = plan.agent;
     if (!this.agentId) return;
 
     const claimed = this.store.claimTask({ taskId: task.id, agentId: this.agentId });
@@ -447,29 +458,23 @@ export class Dispatcher {
       console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
     }
 
+    // Handover: on failure advance to the NEXT brain in the agent's chain
+    // (or, for a pinned brain, retry it up to inbox.maxRetries). context.attempts
+    // is the chain index, so planFor picks the next brain on the requeue.
+    const bound = plan.pinned ? this.config.inbox.maxRetries : plan.chainLen;
     if (!output.ok) {
-      // Handover: retry up to inbox.maxRetries, handing off to the target's
-      // fallback (a role or a brain) on each failed attempt.
       const fresh = this.store.getTask(task.id);
       if (fresh) {
-        const attempts = (Number(fresh.context?.attempts) || 0) + 1;
-        const maxRetries = this.config.inbox.maxRetries;
-        if (attempts < maxRetries) {
-          const fb = plan.fallback;
-          const ctx: Record<string, unknown> = { ...(fresh.context || {}), attempts, dispatched: false };
-          let handoffLabel = plan.label;
-          if (fb?.via === 'brain' && this.config.orchestration.brains?.[fb.id]) {
-            ctx.brain = fb.id; handoffLabel = fb.id;
-          } else if (fb?.via === 'role' && this.config.orchestration.roles[fb.id]) {
-            ctx.role = fb.id; delete ctx.brain; handoffLabel = fb.id;  // role fallback clears any brain override
-          }
+        const nextAttempt = plan.attempt + 1;
+        if (nextAttempt < bound) {
+          const nextBrain = plan.pinned ? plan.brainId : (this.agents()[plan.agent]?.brains[nextAttempt] || '?');
           fresh.status = 'pending';
           delete fresh.claimedAt;
           delete fresh.claimedBy;
-          fresh.context = ctx;
-          fresh.result = `attempt ${attempts}/${maxRetries} failed on "${plan.label}"${handoffLabel !== plan.label ? ` — handed over to "${handoffLabel}"` : ' — retrying'}: ${output.text.slice(0, 300)}`;
+          fresh.context = { ...(fresh.context || {}), attempts: nextAttempt, dispatched: false };
+          fresh.result = `attempt ${plan.attempt + 1}/${bound} failed on ${plan.brainId}${plan.pinned ? ' — retrying' : ` — handing over to ${nextBrain}`}: ${output.text.slice(0, 300)}`;
           this.store.saveTask(fresh);
-          console.log(`Dispatcher: handover — task ${task.id} attempt ${attempts} failed on ${plan.label}, requeued as ${handoffLabel}`);
+          console.log(`Dispatcher: handover — task ${task.id} attempt ${plan.attempt + 1} failed on ${plan.brainId}, next → ${nextBrain}`);
           return;
         }
       }
@@ -477,7 +482,7 @@ export class Dispatcher {
 
     const result = output.ok
       ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in report ${report?.id ?? 'n/a'})` : output.text
-      : `FAILED after ${this.config.inbox.maxRetries} attempts: ${output.text.slice(0, 1000)}`;
+      : `FAILED after ${bound} attempt(s) (chain exhausted): ${output.text.slice(0, 1000)}`;
 
     this.store.completeTask({ taskId: task.id, result, reportPath: report?.filePath });
     console.log(`Dispatcher: task ${task.id} ${output.ok ? 'completed' : 'FAILED (retries exhausted)'} (${output.text.length} chars)`);

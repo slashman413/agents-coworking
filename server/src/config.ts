@@ -54,6 +54,7 @@ const defaultConfig: Config = {
     pollIntervalMs: 5000,
     taskTimeoutMs: 1800000,
     defaultRole: 'generalist',
+    agents: {},
     roles: {},
     brains: {},
     classifier: {
@@ -91,6 +92,7 @@ export function loadConfig(): Config {
     orchestration: {
       ...defaultConfig.orchestration,
       ...(loadedConfig.orchestration || {}),
+      agents: loadedConfig.orchestration?.agents || {},
       roles: loadedConfig.orchestration?.roles || {},
       brains: loadedConfig.orchestration?.brains || {},
       classifier: {
@@ -114,4 +116,20 @@ export function loadConfig(): Config {
   }
 
   return config;
+}
+
+/**
+ * Persist edits to the live agents/brains registries: mutate the in-memory
+ * config (so the dispatcher sees changes on its next tick) AND write them back
+ * to config.json's orchestration.agents/brains. Other config fields are left
+ * exactly as they are on disk.
+ */
+export function persistRegistries(config: Config): void {
+  const configPath = path.resolve(rootDir, 'config.json');
+  let disk: any = {};
+  try { disk = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { /* start fresh */ }
+  disk.orchestration = disk.orchestration || {};
+  disk.orchestration.agents = config.orchestration.agents;
+  disk.orchestration.brains = config.orchestration.brains;
+  fs.writeFileSync(configPath, JSON.stringify(disk, null, 2));
 }

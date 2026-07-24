@@ -67,80 +67,135 @@
       "timeoutMs": 180000
     },
     "staleClaimMs": 1800000,
-    "brains": {
-      "local-ha-qwen35b": { "description": "Local Hermes Agent using Qwen3.6-35B-A3B (local vLLM :8000)", "location": "local", "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
-      "local-ha-qwen27b": { "description": "Local Hermes Agent using Qwen3.6-27B (local vLLM :8001)", "location": "local", "exec": "hermes", "model": "nvidia/Qwen3.6-27B-NVFP4" },
-      "local-ha-deepseek": { "description": "Local Hermes Agent using deepseek-v4-flash (cloud model)", "location": "local", "exec": "hermes", "model": "deepseek:deepseek-v4-flash" },
-      "local-cc-opus": { "description": "Local Claude Code using Opus 4.8", "location": "local", "exec": "claude", "model": "claude-opus-4-8" },
-      "local-cc-sonnet": { "description": "Local Claude Code using Sonnet 5", "location": "local", "exec": "claude", "model": "claude-sonnet-5" },
-      "local-cc-fable": { "description": "Local Claude Code using Fable 5", "location": "local", "exec": "claude", "model": "claude-fable-5" },
-      "local-agy": { "description": "Local Antigravity (AGY) CLI, account default model", "location": "local", "exec": "agy", "model": "" },
-      "local-comfy-ltx": { "description": "Local ComfyUI LTX video pipeline (short vertical promo)", "location": "local", "exec": "script", "command": ["/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"] },
-      "remote-aicodegen-cc-fable": { "description": "Remote MCP client on host 'aicodegen' running Claude using Fable", "location": "remote", "host": "aicodegen", "exec": "claude", "model": "claude-fable-5" }
-    },
-    "roles": {
+    "agents": {
       "orchestrator": {
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "fallback": "orchestrator-local"
-      },
-      "orchestrator-fable": {
-        "exec": "claude",
-        "model": "claude-fable-5"
+        "description": "Decompose a CEO idea into role-tagged subtasks and dispatch them",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek",
+          "local-cc-sonnet"
+        ]
       },
       "engineer": {
-        "exec": "claude",
-        "model": "claude-opus-4-8",
-        "fallback": "engineer-local"
+        "description": "Write/refactor code, UI, technical implementation",
+        "brains": [
+          "local-cc-opus",
+          "local-ha-deepseek",
+          "local-ha-qwen35b"
+        ]
       },
       "engineer-local": {
-        "exec": "hermes",
-        "model": "deepseek:deepseek-v4-flash",
-        "fallback": "generalist"
+        "description": "Write/refactor code on a cheaper local model",
+        "brains": [
+          "local-ha-deepseek",
+          "local-ha-qwen35b"
+        ]
       },
       "planner": {
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "fallback": "generalist"
+        "description": "Product planning, roadmaps, breaking work into steps",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek"
+        ]
       },
       "researcher": {
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-27B-NVFP4",
-        "fallback": "generalist"
+        "description": "Deep research, market/competitive analysis",
+        "brains": [
+          "local-ha-qwen27b",
+          "local-ha-qwen35b"
+        ]
       },
       "sales": {
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "fallback": "generalist"
+        "description": "Pricing, monetization, outreach",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek"
+        ]
       },
       "marketing": {
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "fallback": "generalist"
+        "description": "Copy, campaigns, positioning, social",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek"
+        ]
       },
       "generalist": {
+        "description": "Anything that doesn't fit another agent",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek"
+        ]
+      },
+      "video": {
+        "description": "Short vertical promo/shorts video via the ComfyUI LTX pipeline",
+        "brains": [
+          "local-comfy-ltx"
+        ]
+      },
+      "antigravity": {
+        "description": "Antigravity (AGY) agent",
+        "brains": [
+          "local-agy"
+        ]
+      }
+    },
+    "brains": {
+      "local-ha-qwen35b": {
+        "description": "Local Hermes Agent using Qwen3.6-35B-A3B (local vLLM :8000)",
+        "location": "local",
         "exec": "hermes",
         "model": "nvidia/Qwen3.6-35B-A3B-NVFP4"
       },
-      "antigravity": {
-        "exec": "agy",
-        "model": ""
-      },
-      "orchestrator-local": {
+      "local-ha-qwen27b": {
+        "description": "Local Hermes Agent using Qwen3.6-27B (local vLLM :8001)",
+        "location": "local",
         "exec": "hermes",
-        "model": "deepseek:deepseek-v4-flash",
-        "fallback": "orchestrator-cloud"
+        "model": "nvidia/Qwen3.6-27B-NVFP4"
       },
-      "orchestrator-cloud": {
+      "local-ha-deepseek": {
+        "description": "Local Hermes Agent using deepseek-v4-flash (cloud model)",
+        "location": "local",
+        "exec": "hermes",
+        "model": "deepseek:deepseek-v4-flash"
+      },
+      "local-cc-opus": {
+        "description": "Local Claude Code using Opus 4.8",
+        "location": "local",
+        "exec": "claude",
+        "model": "claude-opus-4-8"
+      },
+      "local-cc-sonnet": {
+        "description": "Local Claude Code using Sonnet 5",
+        "location": "local",
         "exec": "claude",
         "model": "claude-sonnet-5"
       },
-      "video": {
+      "local-cc-fable": {
+        "description": "Local Claude Code using Fable 5",
+        "location": "local",
+        "exec": "claude",
+        "model": "claude-fable-5"
+      },
+      "local-agy": {
+        "description": "Local Antigravity (AGY) CLI, account default model",
+        "location": "local",
+        "exec": "agy",
+        "model": ""
+      },
+      "local-comfy-ltx": {
+        "description": "Local ComfyUI LTX video pipeline (short vertical promo)",
+        "location": "local",
         "exec": "script",
-        "model": "ComfyUI-LTX",
         "command": [
           "/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"
         ]
+      },
+      "remote-aicodegen-cc-fable": {
+        "description": "Remote MCP client on host 'aicodegen' running Claude using Fable",
+        "location": "remote",
+        "host": "aicodegen",
+        "exec": "claude",
+        "model": "claude-fable-5"
       }
     }
   }
