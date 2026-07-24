@@ -13,7 +13,7 @@ pane of glass.
 
 | Platform | Agents | Format |
 |----------|--------|--------|
-| Claude Code | ~250 | `.md` with YAML frontmatter |
+| Claude Code | ~285 | `.md` with YAML frontmatter |
 | Antigravity (AGY) | Built-in + skills | `SKILL.md` |
 | Hermes Agent | 39 skills | `SKILL.md` + triggers |
 | Gemini CLI | Converted from source | `.md` subagents |
@@ -31,7 +31,7 @@ pane of glass.
 - **Node.js** ≥ 20 (tested with v22)
 - **npm** ≥ 10
 - The [agency-agents](./agency-agents) repo — bundled as a **git submodule** at
-  `cowork/agency-agents` (the 250-agent roster). Clone with submodules:
+  `cowork/agency-agents` (the 285-agent roster). Clone with submodules:
 
   ```bash
   git clone --recurse-submodules https://github.com/slashman413/cowork
@@ -70,7 +70,6 @@ Edit `~/.cowork/config.json` to match your environment:
     "agencyAgents": "./agency-agents",  // ← Path to agency-agents repo
     "inbox": "./inbox",
     "reports": "./reports",
-    "skills": "./skills",
     "status": "./.status",
     "decisions": "./decisions"
   }
@@ -111,7 +110,7 @@ You should see:
    MCP endpoint: http://0.0.0.0:6868/mcp
    Web Dashboard: http://0.0.0.0:6868/
    REST API: http://0.0.0.0:6868/api/
-   Roster loaded: 250 agents across 18 divisions
+   Roster loaded: 285 agents across 19 divisions
 ```
 
 ### 4. Open the Dashboard
@@ -185,22 +184,22 @@ Output becomes the task `result`; the full transcript is filed as a report.
 An unassigned task is routed in **two stages** by an orchestrator/classifier brain
 (default `Qwen3.6-35B-A3B`, `orchestration.classifier`):
 
-1. **Division** — pick 1 of 18 divisions (testing, engineering, security, …).
-2. **Agent** — pick 1 of ~250 roster agents in that division. The chosen agent's
+1. **Division** — pick 1 of 19 divisions (testing, engineering, security, …).
+2. **Agent** — pick 1 of ~285 roster agents in that division. The chosen agent's
    full `.md` **persona** becomes the system prompt.
 
 The agent then runs on a **brain fallback chain** (below). Skip the classifier by
 targeting directly: `context.agent: "<roster-slug>"` or a special-executor name.
 Tag a task `manual` to never auto-execute.
 
-### Executors: special agents + the 250-agent roster
+### Executors: special agents + the 285-agent roster
 
 - **Special executors** (`config.json → orchestration.agents`) — only
   `orchestrator`, `generalist`, `video`; each is `{description, brains: [...]}`
   with its own chain. `video` runs the ComfyUI **LTX** pipeline
   (`deploy/video-pipeline.sh`; LTX only — never Wan/Hunyuan/SVD).
-- **Roster agents** — the ~250 personas in the `agency-agents` submodule, grouped
-  into 18 divisions. They have no chain of their own; they run on the division's
+- **Roster agents** — the ~285 personas in the `agency-agents` submodule, grouped
+  into 19 divisions. They have no chain of their own; they run on the division's
   chain if one is set, else the global default.
 
 ### Brain fallback chains (`GET /api/chains`)
@@ -343,7 +342,7 @@ Once connected, agents have access to these tools:
 | `register_agent` | Register this client; optionally DECLARE the `brains` it can run |
 | `deregister_agent` | Remove this client and cascade-remove every brain it registered |
 | `heartbeat` | Update status and current task |
-| `get_roster` | Search ~250 agents across 18 divisions |
+| `get_roster` | Search ~285 agents across 19 divisions |
 | `create_task` | Create a task for another agent/platform |
 | `claim_task` | Claim a pending inbox task |
 | `complete_task` | Mark a task as done with results |
@@ -408,7 +407,7 @@ cowork/
 ├── README.md                # This file
 ├── PROTOCOL.md              # Protocol specification
 ├── JOIN-AS-A-BRAIN.md       # Onboarding for a remote brain client
-├── agency-agents/           # git SUBMODULE — the ~250-agent roster
+├── agency-agents/           # git SUBMODULE — the ~285-agent roster
 ├── server/                  # MCP Server + Web UI
 │   ├── src/                 # TypeScript source
 │   └── public/              # Web UI (HTML/CSS/JS)
@@ -507,7 +506,6 @@ curl -X POST http://localhost:6868/mcp \
     "agencyAgents": "./agency-agents",
     "inbox": "./inbox",
     "reports": "./reports",
-    "skills": "./skills",
     "status": "./.status",
     "decisions": "./decisions"
   },

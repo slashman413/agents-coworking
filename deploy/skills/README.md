@@ -13,5 +13,5 @@ The Antigravity/Gemini brain-registration skill
 heartbeat + task-loop skill with no dispatcher description, so it is not vendored here.
 
 To update a live copy after editing here (or vice-versa), copy the file to/from the
-install path above. These describe the two-stage roster router (division → 1-of-250
+install path above. These describe the two-stage roster router (division → 1-of-285
 agent persona) and the global-default + per-division brain fallback chains.

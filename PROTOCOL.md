@@ -122,7 +122,7 @@ The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
 | `register_agent` | Register an agent session; optionally DECLARE runnable `brains` |
 | `deregister_agent` | Remove the agent and cascade-remove every brain it registered |
 | `heartbeat` | Update agent status |
-| `get_roster` | Query agent roster (~250 agents across 18 divisions) |
+| `get_roster` | Query agent roster (~285 agents across 19 divisions) |
 | `create_task` | Create a cross-platform task |
 | `claim_task` | Claim a pending task |
 | `complete_task` | Mark task as done |

@@ -155,8 +155,8 @@ When the user shares a business idea or multi-part request:
 
 2. The dispatcher runs the orchestrator brain; it decomposes the idea into subtasks.
    Each unassigned subtask is **routed in two stages** — an orchestrator/classifier
-   brain (default qwen35b) picks a **division** (1 of 18), then a **roster agent**
-   (1 of 250) whose `.md` persona becomes the system prompt, run on that division's
+   brain (default qwen35b) picks a **division** (1 of 19), then a **roster agent**
+   (1 of 285) whose `.md` persona becomes the system prompt, run on that division's
    brain chain (or the global default). Target directly with `context.agent: "<slug>"`.
 
 3. Track progress with `list_inbox` / `get_dashboard`; results in `list_reports`;
@@ -165,14 +165,14 @@ When the user shares a business idea or multi-part request:
 ### Routing model (config.json orchestration)
 
 There is **no fixed role→brain table** anymore. Only three **special executors** carry
-their own chains; everything else routes through the 250-agent roster:
+their own chains; everything else routes through the 285-agent roster:
 
 | Executor | Kind | Brain chain source |
 |----------|------|--------------------|
 | orchestrator | special | `orchestration.agents.orchestrator.brains` |
 | generalist | special | `orchestration.agents.generalist.brains` |
 | video | special | `orchestration.agents.video.brains` (LTX only — never Wan/Hunyuan) |
-| any of 250 roster agents | roster | `orchestration.divisionChains[<division>]` if set, else `orchestration.defaultChain` |
+| any of 285 roster agents | roster | `orchestration.divisionChains[<division>]` if set, else `orchestration.defaultChain` |
 
 - **Global default chain**: `orchestration.defaultChain` — drag-reorder in the Brains
   view (`PUT /api/chains/default`).

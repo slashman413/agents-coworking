@@ -1,6 +1,6 @@
 ---
 name: cowork
-description: Coordinate with other AI agents (Hermes, Antigravity, other Claude sessions) via the Cowork MCP server — register presence, dispatch/claim cross-platform tasks, check the shared inbox, browse the 250-agent roster, and file reports. Use when the user wants to dispatch work to another agent/platform, check the shared task inbox, see which agents are active, or file a cross-agent report.
+description: Coordinate with other AI agents (Hermes, Antigravity, other Claude sessions) via the Cowork MCP server — register presence, dispatch/claim cross-platform tasks, check the shared inbox, browse the 285-agent roster, and file reports. Use when the user wants to dispatch work to another agent/platform, check the shared task inbox, see which agents are active, or file a cross-agent report.
 ---
 
 # Cowork — Multi-Agent Coordination
@@ -22,25 +22,25 @@ is the shared coordination hub for all AI agents on this box. Repo:
    do the work → `complete_task(task_id, result, report_path?)`.
 5. **Report**: `file_report(title, type, author_platform, author_agent, content, status?, tags?)`
    for durable cross-agent write-ups (markdown in `reports/`).
-6. **Situational awareness**: `get_dashboard()`, `get_roster(search?, category?)` (250 agents / 18 divisions).
+6. **Situational awareness**: `get_dashboard()`, `get_roster(search?, category?)` (285 agents / 19 divisions).
 
 ## Dispatcher — automatic execution (two-stage roster routing)
 
 The always-on coordinator (shown in **Connections** as `cowork/orchestrator`) polls the
 inbox and executes any task that resolves to an executor. Routing is **two-stage**:
 an orchestrator/classifier brain (default Qwen3.6-35B-A3B) first picks a **division**
-(1 of 18), then picks a **roster agent** (1 of 250) inside it. The chosen agent's full
+(1 of 19), then picks a **roster agent** (1 of 285) inside it. The chosen agent's full
 `.md` persona (from the `agency-agents` repo) becomes the system prompt, run on the
 division's brain chain. You can also target directly: `context.agent: "<roster-slug>"`
 or a special-executor name skips classification.
 
-### Executors: special agents + the 250-agent roster
+### Executors: special agents + the 285-agent roster
 
 - **Special executors** live in `config.json → orchestration.agents` (only
   `orchestrator`, `generalist`, `video`) — each is `{description, brains: [...]}` with
   its own chain. Edit in the dashboard **Agents** view → *Special executors*
   (or `PUT /api/agents-config/:name`).
-- **Roster agents** are the 250 personas in `agency-agents`, grouped into 18 divisions
+- **Roster agents** are the 285 personas in `agency-agents`, grouped into 19 divisions
   (`GET /api/roster-divisions`). They don't carry their own chain — they run on the
   **division chain** if one is set, else the **global default chain**.
 
