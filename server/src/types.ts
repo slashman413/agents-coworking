@@ -43,6 +43,12 @@ export interface BrainConfig {
   host?: string;
   /** Brain alias to hand off to after a failed attempt. */
   fallback?: string;
+  /** True when auto-registered by a connecting MCP client (vs configured by
+   *  hand). Persisted, and only removed via explicit deregister or the UI —
+   *  never on heartbeat timeout. */
+  dynamic?: boolean;
+  /** Agent id of the client that registered this brain (for explicit deregister). */
+  registeredBy?: string;
 }
 
 export interface ClassifierConfig {

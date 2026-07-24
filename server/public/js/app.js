@@ -94,6 +94,9 @@ class App {
   }
 
   handleSSEEvent(data) {
+    // Any inbound SSE frame means the stream is live — flip the badge to "Live"
+    // immediately (more reliable than relying solely on EventSource.onopen).
+    this.updateConnectionStatus('connected');
     if (!data.type || data.type === 'ping' || data.type === 'connected') return;
     this.activity.unshift(data);
     this.activity = this.activity.slice(0, 30);
@@ -179,8 +182,8 @@ class App {
       .map(([id, on]) => `<p style="margin:6px 0; font-size:0.875rem">${esc(id)} ${dot(on)}</p>`).join('') || '<p style="color:var(--text-muted)">-</p>';
 
     const roles = dispatcher
-      ? Object.entries(dispatcher.roles).map(([r, m]) =>
-          `<tr><td style="padding:3px 12px 3px 0">${badge(r, '#7C3AED')}</td><td style="color:var(--text-secondary); font-size:0.85rem">${esc(m)}</td></tr>`).join('')
+      ? Object.entries(dispatcher.agents || {}).map(([name, a]) =>
+          `<tr><td style="padding:3px 12px 3px 0">${badge(name, '#7C3AED')}</td><td style="color:var(--text-secondary); font-size:0.85rem">${esc((a.brains || []).join(' → '))}</td></tr>`).join('')
       : '';
     const running = dispatcher?.running?.length
       ? dispatcher.running.map(r =>
