@@ -7,8 +7,18 @@ import type { Config } from './types.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // src/ and dist/ both sit one level under server/, so ../../ is the repo root
-// (where config.json lives) from either runtime.
+// (relative paths in config resolve against it) from either runtime.
 const rootDir = path.resolve(__dirname, '../../');
+
+// The repo's config.json is a sanitized TEMPLATE only. The real per-server config
+// lives outside the repo at ~/.cowork/config.json (override with COWORK_CONFIG), so
+// personal host/brain settings are never committed and the server's live edits don't
+// churn the repo. On first run we seed the user config from the repo template.
+const REPO_TEMPLATE = path.resolve(rootDir, 'config.json');
+function activeConfigPath(): string {
+  if (process.env.COWORK_CONFIG) return expandHome(process.env.COWORK_CONFIG);
+  return path.join(os.homedir(), '.cowork', 'config.json');
+}
 
 function expandHome(filepath: string): string {
   if (filepath.startsWith('~')) {
@@ -69,19 +79,33 @@ const defaultConfig: Config = {
 };
 
 export function loadConfig(): Config {
-  const configPath = path.resolve(rootDir, 'config.json');
-  let loadedConfig: Partial<Config> = {};
+  const configPath = activeConfigPath();
 
+  // First run: seed the per-server config from the repo template.
+  if (!fs.existsSync(configPath)) {
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      if (fs.existsSync(REPO_TEMPLATE)) {
+        fs.copyFileSync(REPO_TEMPLATE, configPath);
+        console.log(`Seeded per-server config at ${configPath} from repo template.`);
+      }
+    } catch (e) {
+      console.error(`Could not seed config at ${configPath}:`, e);
+    }
+  }
+
+  let loadedConfig: Partial<Config> = {};
   if (fs.existsSync(configPath)) {
     try {
       const fileContent = fs.readFileSync(configPath, 'utf-8');
       loadedConfig = JSON.parse(fileContent);
     } catch (error) {
-      console.error(`Error parsing config.json at ${configPath}:`, error);
+      console.error(`Error parsing config at ${configPath}:`, error);
     }
   } else {
     console.warn(`Config file not found at ${configPath}, using defaults.`);
   }
+  console.log(`Loaded config from ${configPath}`);
 
   const config: Config = {
     server: { ...defaultConfig.server, ...(loadedConfig.server || {}) },
@@ -124,13 +148,15 @@ export function loadConfig(): Config {
 /**
  * Persist edits to the live agents/brains registries: mutate the in-memory
  * config (so the dispatcher sees changes on its next tick) AND write them back
- * to config.json's orchestration.agents/brains. Other config fields are left
- * exactly as they are on disk.
+ * to the per-server config's orchestration.agents/brains. Writes to
+ * ~/.cowork/config.json (or COWORK_CONFIG) — never the repo template. Other
+ * config fields are left exactly as they are on disk.
  */
 export function persistRegistries(config: Config): void {
-  const configPath = path.resolve(rootDir, 'config.json');
+  const configPath = activeConfigPath();
   let disk: any = {};
   try { disk = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { /* start fresh */ }
+  try { fs.mkdirSync(path.dirname(configPath), { recursive: true }); } catch { /* dir exists */ }
   disk.orchestration = disk.orchestration || {};
   disk.orchestration.agents = config.orchestration.agents;
   disk.orchestration.brains = config.orchestration.brains;

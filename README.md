@@ -41,7 +41,14 @@ npm install
 
 ### 2. Configure Settings
 
-Edit `cowork/config.json` to match your environment:
+**Config lives outside the repo.** The tracked `cowork/config.json` is a sanitized
+**template only**. On first run the server copies it to **`~/.cowork/config.json`** —
+your real per-server config (host binding, registered brains, chains). Edit *that*
+copy, not the template; the server also persists all live dashboard/API edits there,
+so your personal host/brain settings never touch the repo. Override the location with
+the `COWORK_CONFIG` env var.
+
+Edit `~/.cowork/config.json` to match your environment:
 
 ```json
 {

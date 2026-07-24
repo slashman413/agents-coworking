@@ -1,7 +1,8 @@
 {
+  "_comment": "TEMPLATE ONLY. The real per-server config lives at ~/.cowork/config.json (override with COWORK_CONFIG). On first run the server copies this file there; edit the copy, not this template. Personal host/brain settings must never be committed here.",
   "server": {
     "port": 6868,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "name": "cowork-mcp",
     "version": "1.0.0",
     "apiKey": null
@@ -78,7 +79,7 @@
       "orchestrator": {
         "description": "Decompose a CEO idea into role-tagged subtasks and dispatch them",
         "brains": [
-          "remote-ai-code-gen-cc-fable",
+          "local-cc-fable",
           "local-ha-qwen35b",
           "local-ha-deepseek"
         ]
@@ -87,7 +88,8 @@
         "description": "Fallback when the router can't classify or a roster agent fails through its chain",
         "brains": [
           "local-ha-qwen35b",
-          "local-ha-deepseek"
+          "local-ha-deepseek",
+          "local-cc-sonnet"
         ]
       },
       "video": {
@@ -99,20 +101,16 @@
     },
     "brains": {
       "local-ha-qwen35b": {
-        "description": "local-ha-qwen35b (auto-registered by hermes-agent-wayne)",
+        "description": "Local Hermes agent on Qwen3.6-35B-A3B",
         "location": "local",
         "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "dynamic": true,
-        "registeredBy": "b27e60cf-e3ec-4a2a-8215-70759a53b33f"
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4"
       },
       "local-ha-deepseek": {
-        "description": "local-ha-deepseek (auto-registered by hermes-agent-wayne)",
+        "description": "Local Hermes agent on DeepSeek-V4-Flash",
         "location": "local",
         "exec": "hermes",
-        "model": "deepseek:deepseek-v4-flash",
-        "dynamic": true,
-        "registeredBy": "b27e60cf-e3ec-4a2a-8215-70759a53b33f"
+        "model": "deepseek:deepseek-v4-flash"
       },
       "local-cc-opus": {
         "description": "Local Claude Code using Opus 4.8",
@@ -137,134 +135,15 @@
         "location": "local",
         "exec": "script",
         "command": [
-          "/home/wayne/workspace/github/slashman413/cowork/deploy/video-pipeline.sh"
+          "./deploy/video-pipeline.sh"
         ]
       },
-      "remote-ai-code-gen-cc-opus": {
-        "description": "remote-ai-code-gen-cc-opus (auto-registered by ai-code-gen-brains)",
-        "location": "remote",
-        "exec": "claude",
-        "model": "claude-opus-4-8",
-        "host": "ai-code-gen",
-        "dynamic": true,
-        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
-      },
-      "remote-ai-code-gen-cc-sonnet": {
-        "description": "remote-ai-code-gen-cc-sonnet (auto-registered by ai-code-gen-brains)",
+      "remote-example-cc-sonnet": {
+        "description": "EXAMPLE remote brain — a Claude Code client on another machine. Delete or edit; remote brains normally auto-register via register_agent (see JOIN-AS-A-BRAIN.md).",
         "location": "remote",
         "exec": "claude",
         "model": "claude-sonnet-5",
-        "host": "ai-code-gen",
-        "dynamic": true,
-        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
-      },
-      "remote-ai-code-gen-cc-fable": {
-        "description": "remote-ai-code-gen-cc-fable (auto-registered by ai-code-gen-brains)",
-        "location": "remote",
-        "exec": "claude",
-        "model": "claude-fable-5",
-        "host": "ai-code-gen",
-        "dynamic": true,
-        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
-      },
-      "local-agy-gemini-3.6-flash-high": {
-        "description": "local-agy-gemini-3.6-flash-high (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.6-flash-high",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.6-flash-medium": {
-        "description": "local-agy-gemini-3.6-flash-medium (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.6-flash-medium",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.6-flash-low": {
-        "description": "local-agy-gemini-3.6-flash-low (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.6-flash-low",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.5-flash-high": {
-        "description": "local-agy-gemini-3.5-flash-high (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.5-flash-high",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.5-flash-medium": {
-        "description": "local-agy-gemini-3.5-flash-medium (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.5-flash-medium",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.5-flash-low": {
-        "description": "local-agy-gemini-3.5-flash-low (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.5-flash-low",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.1-pro-high": {
-        "description": "local-agy-gemini-3.1-pro-high (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.1-pro-high",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gemini-3.1-pro-low": {
-        "description": "local-agy-gemini-3.1-pro-low (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gemini-3.1-pro-low",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-claude-sonnet-4-6": {
-        "description": "local-agy-claude-sonnet-4-6 (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "claude-sonnet-4-6",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-claude-opus-4-6-thinking": {
-        "description": "local-agy-claude-opus-4-6-thinking (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "claude-opus-4-6-thinking",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
-      },
-      "local-agy-gpt-oss-120b-medium": {
-        "description": "local-agy-gpt-oss-120b-medium (auto-registered by local)",
-        "location": "local",
-        "exec": "agy",
-        "model": "gpt-oss-120b-medium",
-        "host": "local",
-        "dynamic": true,
-        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+        "host": "your-remote-host"
       }
     }
   }
