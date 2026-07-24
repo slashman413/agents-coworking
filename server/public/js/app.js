@@ -55,6 +55,7 @@ class App {
     this.sse = null;
     this.activity = [];
     this.inboxFilter = '';
+    this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
 
     this.contentEl = document.getElementById('content');
     this.viewTitleEl = document.getElementById('view-title');
@@ -138,15 +139,34 @@ class App {
     }
   }
 
+  // Map an agent UUID to its human-readable name (falls back to a short id).
+  agentLabel(id) {
+    if (!id) return '';
+    const a = this.agents.get(id);
+    return a ? a.name : id.slice(0, 8);
+  }
+
+  // Refresh the UUID→name map from the full active-agent list (includes the
+  // internal dispatcher/orchestrator, unlike /connections). Call before
+  // rendering views that show agent ids: dashboard, inbox, connections.
+  async refreshAgents() {
+    try {
+      const agents = await this.api.get('/agents');
+      (Array.isArray(agents) ? agents : []).forEach(a => this.agents.set(a.id, { name: a.agentName, platform: a.platform }));
+    } catch { /* keep whatever we have */ }
+  }
+
   describeEvent(e) {
     const p = e.payload || {};
     switch (e.type) {
-      case 'agentRegistered': return `${p.agent?.agentName} (${p.agent?.platform}) joined`;
+      case 'agentRegistered':
+        if (p.agent?.id) this.agents.set(p.agent.id, { name: p.agent.agentName, platform: p.agent.platform });
+        return `${p.agent?.agentName} (${p.agent?.platform}) joined`;
       case 'taskCreated': return p.task?.title;
-      case 'taskClaimed': return `claimed: ${p.task?.title}`;
+      case 'taskClaimed': return `claimed by ${this.agentLabel(p.task?.claimedBy || p.agentId)}: ${p.task?.title}`;
       case 'taskCompleted': return `done: ${p.task?.title}`;
       case 'reportFiled': return p.report?.title;
-      case 'heartbeat': return `${(p.agentId || '').slice(0, 8)} → ${p.status}`;
+      case 'heartbeat': return `${this.agentLabel(p.agentId)} → ${p.status}`;
       default: return JSON.stringify(p).slice(0, 80);
     }
   }
@@ -199,7 +219,8 @@ class App {
   async renderDashboard() {
     const [status, dispatcher] = await Promise.all([
       this.api.get('/status'),
-      this.api.get('/dispatcher').catch(() => null)
+      this.api.get('/dispatcher').catch(() => null),
+      this.refreshAgents()
     ]);
     const stat = (iconName, value, label) => `
       <div class="card stat-card">
@@ -313,7 +334,7 @@ class App {
 
   async renderInbox() {
     const q = this.inboxFilter ? `?status=${this.inboxFilter}&limit=100` : '?limit=100';
-    const tasks = await this.api.get(`/inbox${q}`);
+    const [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
     const pills = ['', 'pending', 'in-progress', 'done'].map(f => {
       const label = f === '' ? 'All' : f;
       const active = this.inboxFilter === f;
@@ -343,7 +364,7 @@ class App {
           ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT')}</div>` : ''}
           ${arts.length ? `<div style="margin-top:10px"><h4 style="font-size:0.75rem;color:var(--text-muted)">ARTIFACTS</h4>
             ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:2px 4px 2px 0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
-          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(t.claimedBy.slice(0, 8))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
+          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(this.agentLabel(t.claimedBy))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
         </div>
       </div>`;
     }).join('') : `<div class="empty-state"><p>No tasks${this.inboxFilter ? ` with status "${esc(this.inboxFilter)}"` : ''}.</p></div>`;
