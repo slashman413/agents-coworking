@@ -54,7 +54,15 @@ const defaultConfig: Config = {
     pollIntervalMs: 5000,
     taskTimeoutMs: 1800000,
     defaultRole: 'generalist',
-    roles: {}
+    roles: {},
+    classifier: {
+      enabled: false,
+      exec: 'hermes',
+      model: 'nvidia/Qwen3.6-35B-A3B-NVFP4',
+      fallbackRole: 'generalist',
+      timeoutMs: 180000
+    },
+    staleClaimMs: 0
   }
 };
 
@@ -82,7 +90,11 @@ export function loadConfig(): Config {
     orchestration: {
       ...defaultConfig.orchestration,
       ...(loadedConfig.orchestration || {}),
-      roles: loadedConfig.orchestration?.roles || {}
+      roles: loadedConfig.orchestration?.roles || {},
+      classifier: {
+        ...defaultConfig.orchestration.classifier!,
+        ...(loadedConfig.orchestration?.classifier || {})
+      }
     }
   };
 

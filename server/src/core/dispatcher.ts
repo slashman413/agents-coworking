@@ -27,6 +27,7 @@ export class Dispatcher {
   private agentId: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private classifying = new Set<string>();
 
   constructor(config: Config, store: Store, eventBus: EventBus) {
     this.config = config;
@@ -67,7 +68,8 @@ export class Dispatcher {
     });
     this.agentId = agent.id;
     this.timer = setInterval(() => this.tick(), orch.pollIntervalMs);
-    console.log(`Dispatcher: started (roles: ${Object.keys(orch.roles).join(', ')}; max ${orch.maxConcurrent} concurrent)`);
+    const clsMsg = orch.classifier?.enabled ? `classifier ${orch.classifier.model}` : 'classifier off';
+    console.log(`Dispatcher: started (roles: ${Object.keys(orch.roles).join(', ')}; max ${orch.maxConcurrent} concurrent; ${clsMsg}; staleClaim ${orch.staleClaimMs ?? 0}ms)`);
   }
 
   public stop(): void {
@@ -95,7 +97,6 @@ export class Dispatcher {
   private tick(): void {
     if (this.stopped || !this.agentId) return;
     const orch = this.config.orchestration;
-    if (this.running.size >= orch.maxConcurrent) return;
 
     // heartbeat keeps the dispatcher and its live workers visible on the dashboard
     this.store.updateHeartbeat({
@@ -109,6 +110,11 @@ export class Dispatcher {
       }
     }
 
+    // Rescue tasks orphaned by a crashed/exited agent (runs every tick, cheap).
+    this.reclaimStaleClaims();
+
+    if (this.running.size >= orch.maxConcurrent) return;
+
     // FIFO: listTasks sorts newest-first; dispatch oldest first so pipelines
     // (research -> synthesis) run in creation order.
     const pending = this.store.listTasks({ status: 'pending' }).reverse();
@@ -116,10 +122,93 @@ export class Dispatcher {
       if (this.running.size >= orch.maxConcurrent) break;
       if (this.running.has(task.id)) continue;
       const role = this.resolveRole(task);
-      if (!role) continue;
+      if (!role) {
+        // No deterministic role — let the LLM classifier assign one (async).
+        if (task.tags?.includes('manual')) continue;
+        this.classify(task);
+        continue;
+      }
       if (!this.depsSatisfied(task)) continue;
       this.execute(task, role).catch(e => console.error(`Dispatcher: task ${task.id} failed:`, e));
     }
+  }
+
+  /**
+   * Reclaim in-progress/claimed tasks whose claiming agent is no longer active.
+   * Covers dispatcher restarts AND live agents that claimed work then died.
+   * A task still owned by a heartbeating agent (or currently running here) is
+   * left alone. Gated by orchestration.staleClaimMs (0 disables).
+   */
+  private reclaimStaleClaims(): void {
+    const staleMs = this.config.orchestration.staleClaimMs ?? 0;
+    if (staleMs <= 0) return;
+    const activeIds = new Set(this.store.getActiveAgents().map(a => a.id));
+    for (const t of this.store.listTasks({ status: 'in-progress' })) {
+      if (this.running.has(t.id)) continue;
+      const claimAge = t.claimedAt ? Date.now() - new Date(t.claimedAt).getTime() : Infinity;
+      const claimerGone = !t.claimedBy || !activeIds.has(t.claimedBy);
+      if (claimerGone && claimAge > staleMs) {
+        t.status = 'pending';
+        const prevClaimer = t.claimedBy;
+        delete t.claimedAt;
+        delete t.claimedBy;
+        t.context = { ...(t.context || {}), dispatched: false };
+        this.store.saveTask(t);
+        console.log(`Dispatcher: reclaimed stale task ${t.id} (claimer ${prevClaimer ?? '?'} gone) — ${t.title}`);
+      }
+    }
+  }
+
+  /**
+   * LLM-driven role assignment for roleless tasks — the "dispatcher agent"
+   * (default Qwen3.6-35B-A3B, configurable via orchestration.classifier).
+   * Single-flight per task; writes context.role so the next tick dispatches
+   * it normally. Falls back to classifier.fallbackRole on any failure.
+   */
+  private classify(task: Task): void {
+    const cls = this.config.orchestration.classifier;
+    if (!cls?.enabled) return;
+    if (this.classifying.has(task.id)) return;
+    this.classifying.add(task.id);
+
+    const roleList = Object.keys(this.config.orchestration.roles)
+      .filter(r => !r.startsWith('orchestrator'));
+    const prompt =
+      `You are the DISPATCHER for a multi-agent company. Assign this task to ONE role.\n\n` +
+      `Task title: ${task.title}\n` +
+      `Task description: ${task.description}\n\n` +
+      `Available roles:\n` +
+      `- engineer: writing/refactoring code, UI, technical implementation (premium)\n` +
+      `- engineer-local: writing/refactoring code, cheaper local model\n` +
+      `- planner: product planning, roadmaps, breaking work into steps\n` +
+      `- researcher: deep research, market/competitive analysis\n` +
+      `- sales: pricing, monetization, outreach\n` +
+      `- marketing: copy, campaigns, positioning, social\n` +
+      `- generalist: anything else\n\n` +
+      `Reply with ONLY the single role name from the list above. No other text.`;
+
+    const argv = this.buildArgv({ exec: cls.exec, model: cls.model }, prompt);
+    const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    const timer = setTimeout(() => child.kill('SIGTERM'), cls.timeoutMs);
+    child.stdout.on('data', d => { out += d.toString(); });
+    child.on('error', () => { /* handled in close via empty out */ });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const roles = this.config.orchestration.roles;
+      // Pick the last role name that appears in the output (models often
+      // preface the answer). Fall back if nothing matches.
+      const found = Object.keys(roles).filter(r => new RegExp(`\\b${r}\\b`).test(out));
+      const chosen = found.length ? found[found.length - 1]
+        : (roles[cls.fallbackRole] ? cls.fallbackRole : this.config.orchestration.defaultRole);
+      const fresh = this.store.getTask(task.id);
+      if (fresh && fresh.status === 'pending') {
+        fresh.context = { ...(fresh.context || {}), role: chosen, classifiedBy: cls.model };
+        this.store.saveTask(fresh);
+        console.log(`Dispatcher: classified task ${task.id} -> ${chosen} (${cls.model}) — ${task.title}`);
+      }
+      this.classifying.delete(task.id);
+    });
   }
 
   /**

@@ -17,6 +17,18 @@ export interface RoleConfig {
   fallback?: string;
 }
 
+export interface ClassifierConfig {
+  /** When true, the dispatcher uses an LLM to assign a role to any pending
+   *  task that has no role/tag/skill match, so free-text tasks never stall. */
+  enabled: boolean;
+  exec: 'claude' | 'hermes' | 'agy';
+  model: string;
+  /** Role used when the LLM's answer doesn't match a configured role. */
+  fallbackRole: string;
+  /** Per-classification wall-clock budget (ms). */
+  timeoutMs: number;
+}
+
 export interface OrchestrationConfig {
   enabled: boolean;
   maxConcurrent: number;
@@ -24,6 +36,11 @@ export interface OrchestrationConfig {
   taskTimeoutMs: number;
   defaultRole: string;
   roles: Record<string, RoleConfig>;
+  /** LLM classifier that assigns roles to roleless tasks. */
+  classifier?: ClassifierConfig;
+  /** Reclaim in-progress tasks whose claiming agent is gone after this many
+   *  ms (0 disables). Rescues work orphaned by a crashed/exited agent. */
+  staleClaimMs?: number;
 }
 
 export interface Config {

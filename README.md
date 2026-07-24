@@ -180,9 +180,24 @@ CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates a task with
 role-tagged subtasks via `POST /api/inbox` → the dispatcher fans them out to the
 right models → results and full reports appear live on the dashboard.
 
-Tasks **without** a role are left untouched (for live interactive agents); tag a
-task `manual` to always skip dispatch. Dispatcher status: `GET /api/dispatcher`.
-Tune `orchestration.maxConcurrent` / `taskTimeoutMs` / `pollIntervalMs` in config.
+### LLM classifier — no task left behind
+
+A roleless task (e.g. a free-text idea filed straight from Discord) no longer
+stalls: the dispatcher runs an **LLM classifier** (default Qwen3.6-35B-A3B via
+Hermes, `orchestration.classifier` in config.json) that reads the task and
+assigns the best-fit role, which then dispatches normally. Set
+`classifier.enabled: false` to keep the old strict behaviour. Tag a task
+`manual` to skip both classification and dispatch.
+
+### Stale-claim reclaim
+
+`orchestration.staleClaimMs` (default 30 min) reclaims any in-progress task
+whose claiming agent has disappeared — a crashed/exited live agent or a
+dispatcher killed mid-run — back to `pending` so the work is retried. A task
+still owned by a heartbeating agent is never touched.
+
+Dispatcher status: `GET /api/dispatcher`. Tune `orchestration.maxConcurrent` /
+`taskTimeoutMs` / `pollIntervalMs` / `classifier` / `staleClaimMs` in config.
 
 ## Deployment (systemd) & Remote Access
 

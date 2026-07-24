@@ -59,6 +59,14 @@
     "pollIntervalMs": 5000,
     "taskTimeoutMs": 1800000,
     "defaultRole": "generalist",
+    "classifier": {
+      "enabled": true,
+      "exec": "hermes",
+      "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "fallbackRole": "generalist",
+      "timeoutMs": 180000
+    },
+    "staleClaimMs": 1800000,
     "roles": {
       "orchestrator": {
         "exec": "claude",
