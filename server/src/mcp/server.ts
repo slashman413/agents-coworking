@@ -27,6 +27,8 @@ const SERVER_INSTRUCTIONS = [
   '    ]',
   '  })',
   '',
+  'exec is one of: claude | hermes | agy | codex | ollama (model = an Ollama chat model) | script.',
+  '',
   'Then poll list_inbox(status:"pending"), claim_task(task_id, agent_id) any task whose',
   'context.brain is one of your ids, run it locally, and complete_task(...). Call',
   'deregister_agent(agent_id) to remove your brains when you leave (they are NOT',
@@ -60,7 +62,7 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
       brains: z.array(z.object({
         id: z.string(),
         location: z.enum(['local', 'remote']).default('remote'),
-        exec: z.enum(['claude', 'hermes', 'agy', 'script']).optional(),
+        exec: z.enum(['claude', 'hermes', 'agy', 'script', 'codex', 'ollama']).optional(),
         model: z.string().optional(),
         host: z.string().optional(),
         description: z.string().optional()

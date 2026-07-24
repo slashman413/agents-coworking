@@ -34,9 +34,14 @@ you get one brain per model of each CLI found:
 | **`claude`** (Claude Code) | `remote-aicodegen-cc-opus` (claude-opus-4-8), `-cc-sonnet` (claude-sonnet-5), `-cc-fable` (claude-fable-5), `-cc-default` (account default) |
 | **`hermes`** | `remote-aicodegen-ha-qwen35b`, `-ha-qwen27b`, `-ha-deepseek` |
 | **`agy`** (Antigravity) | `remote-aicodegen-agy-default` |
+| **`codex`** (OpenAI Codex CLI) | `remote-aicodegen-codex-default` (`codex exec`) |
+| **`ollama`** | one brain per pulled CHAT model (embedding-only models like nomic are skipped), e.g. `remote-aicodegen-ollama-llama3.2` |
 
 They appear in the dashboard's **Brains** view with an "auto" badge, and can be put
 into any agent's fallback chain or targeted directly with `context.brain`.
+
+Ollama brains appear only if you have pulled a chat model (`ollama pull llama3.2`); an
+embedding-only Ollama install contributes nothing. Codex uses `codex exec` non-interactively.
 
 Want just one platform's set (e.g. skip the others)? Add `PRESET=claude` (or `hermes`/`agy`).
 

@@ -75,12 +75,21 @@ if (process.env.PRESET) {
 } else {
   // Auto-detect: declare a preset for every model CLI on PATH.
   BRAINS = [];
-  for (const [cli, name] of [['claude', 'claude'], ['hermes', 'hermes'], ['agy', 'agy']]) {
+  for (const [cli, name] of [['claude', 'claude'], ['hermes', 'hermes'], ['agy', 'agy'], ['codex', 'codex']]) {
     if (hasCli(cli)) BRAINS.push(...preset(name));
   }
+  // Ollama has no fixed model set — enumerate the pulled CHAT models (skip embedders).
+  if (hasCli('ollama')) {
+    const out = spawnSync('ollama', ['list'], { encoding: 'utf8' }).stdout || '';
+    for (const line of out.split('\n').slice(1)) {
+      const name = line.split(/\s+/)[0];
+      if (!name || /embed/i.test(name)) continue;   // skip embedding-only models
+      BRAINS.push({ id: `remote-{HOST}-ollama-${name.replace(/[:/]/g, '-')}`.split('{HOST}').join(HOST), exec: 'ollama', model: name });
+    }
+  }
   if (!BRAINS.length) {
-    console.error('Auto-detect found no model CLI (claude/hermes/agy) on PATH.\n' +
-      'Install one, or declare brains explicitly: PRESET=claude | BRAINS_FILE=path | BRAINS=<json> | BRAIN_ID=<id>.');
+    console.error('Auto-detect found no usable model CLI (claude/hermes/agy/codex, or an Ollama chat model) on PATH.\n' +
+      'Install one, or declare brains explicitly: PRESET=<name> | BRAINS_FILE=path | BRAINS=<json> | BRAIN_ID=<id>.');
     process.exit(2);
   }
   console.log(`[auto-detect] declaring brains for: ${[...new Set(BRAINS.map(b => b.exec))].join(', ')}`);
@@ -141,8 +150,11 @@ function buildPrompt(task) {
 function runModel(brain, prompt) {
   const argv = brain.exec === 'claude' ? ['claude', '-p', prompt, ...(brain.model ? ['--model', brain.model] : []), '--dangerously-skip-permissions']
     : brain.exec === 'hermes' ? ['hermes', ...(brain.model ? ['-m', brain.model] : []), '-z', prompt]
-    : brain.exec === 'agy' ? ['agy', '-p', prompt] : null;
-  if (!argv) return Promise.resolve({ ok: false, text: `unknown exec ${brain.exec}` });
+    : brain.exec === 'agy' ? ['agy', '-p', prompt]
+    : brain.exec === 'codex' ? ['codex', 'exec', ...(brain.model ? ['-m', brain.model] : []), prompt]
+    : brain.exec === 'ollama' ? (brain.model ? ['ollama', 'run', brain.model, prompt] : null)
+    : null;
+  if (!argv) return Promise.resolve({ ok: false, text: `unknown/misconfigured exec ${brain.exec}` });
   return new Promise((resolve) => {
     const child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';

@@ -215,7 +215,8 @@ export class Dispatcher {
   }
 
   private platformOf(exec: string): string {
-    return exec === 'claude' ? 'claude' : exec === 'agy' ? 'antigravity' : exec === 'script' ? 'pipeline' : 'hermes';
+    const map: Record<string, string> = { claude: 'claude', agy: 'antigravity', script: 'pipeline', codex: 'codex', ollama: 'ollama', hermes: 'hermes' };
+    return map[exec] || 'hermes';
   }
 
   /** Orchestrator-facing description of the brain registry. */
@@ -368,6 +369,13 @@ export class Dispatcher {
           : ['hermes', '-z', prompt];
       case 'agy':
         return ['agy', '-p', prompt];
+      case 'codex':
+        // OpenAI Codex CLI, non-interactive.
+        return ['codex', 'exec', ...(roleCfg.model ? ['-m', roleCfg.model] : []), prompt];
+      case 'ollama':
+        // Local Ollama chat model (model required).
+        if (!roleCfg.model) throw new Error('exec:ollama needs a model');
+        return ['ollama', 'run', roleCfg.model, prompt];
       case 'script':
         // Task is passed via COWORK_TASK_* env vars (see execute); the command
         // is a fixed pipeline, not an LLM prompt.
