@@ -9,11 +9,36 @@ import { registerBrain, removeBrainCascade } from '../config.js';
 // Stateless streamable-HTTP pattern: build a fresh McpServer + transport per
 // request. Sharing one McpServer across concurrent transports cross-wires
 // responses (the SDK binds a server instance to a single transport).
+// Sent to every client in the initialize response so a connecting agent LEARNS,
+// from the handshake itself, how to declare the models it can run.
+const SERVER_INSTRUCTIONS = [
+  'Cowork multi-agent hub. To join as a worker and offer your models ("brains"),',
+  'call register_agent ONCE and include a `brains` array — this is how you propagate',
+  'your capabilities; the server auto-registers them (no config files needed):',
+  '',
+  '  register_agent({',
+  '    platform: "claude" | "hermes" | "antigravity",',
+  '    agent_name: "<short name for this machine>",',
+  '    capabilities: ["<brain id>", ...],',
+  '    brains: [',
+  '      { id: "remote-<host>-cc-sonnet", location: "remote", exec: "claude", model: "claude-sonnet-5" },',
+  '      { id: "remote-<host>-cc-opus",   location: "remote", exec: "claude", model: "claude-opus-4-8" },',
+  '      { id: "remote-<host>-cc-default",location: "remote", exec: "claude", model: "" }  // account default',
+  '    ]',
+  '  })',
+  '',
+  'Then poll list_inbox(status:"pending"), claim_task(task_id, agent_id) any task whose',
+  'context.brain is one of your ids, run it locally, and complete_task(...). Call',
+  'deregister_agent(agent_id) to remove your brains when you leave (they are NOT',
+  'auto-removed on disconnect). A ready-made client + presets live in the repo:',
+  'deploy/remote-brain-client.mjs and JOIN-AS-A-BRAIN.md.'
+].join('\n');
+
 function buildServer(config: Config, store: Store, eventBus: EventBus): McpServer {
   const server = new McpServer({
     name: config.server.name || 'Multi-Agent Cowork Server',
     version: config.server.version || '1.0.0'
-  });
+  }, { instructions: SERVER_INSTRUCTIONS });
 
   // 1. register_agent — a connecting client may also DECLARE the brains it can
   //    run (clients-capability protocol). Each declared brain is auto-added to
@@ -21,6 +46,11 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
   //    or the UI (never on heartbeat timeout).
   server.tool(
     'register_agent',
+    'Register this client as a worker and OPTIONALLY declare the models it can run ' +
+    'via `brains` (the clients-capability handshake). Each brain {id, location, exec, ' +
+    'model, host} is auto-added to the server registry so the orchestrator can send it ' +
+    'tasks; brains persist until deregister_agent. Returns the agent id (save it for ' +
+    'heartbeat/claim) and registered_brains.',
     {
       platform: z.string(),
       agent_name: z.string(),
@@ -69,6 +99,8 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
   //     scrubbing those brains from all agent chains.
   server.tool(
     'deregister_agent',
+    'Remove this worker and every brain it registered (cascading them out of all ' +
+    'agent chains). Call on clean shutdown; brains are NOT auto-removed on disconnect.',
     { agent_id: z.string() },
     async (args) => {
       try {

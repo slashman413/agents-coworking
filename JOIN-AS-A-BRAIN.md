@@ -5,39 +5,54 @@ A "brain" = one model you can run. By joining, you let the Cowork orchestrator s
 tasks to your models; you run them locally and report results back. Everything is
 config — you don't modify any code.
 
-## TL;DR — one command
+## TL;DR — zero config, one command
 
-You only need Node 18+ and this repo. Pick the preset for what you run:
+You only need Node 18+ and this repo. The client **auto-detects** the model CLIs
+installed on your machine (`claude`, `hermes`, `agy`) and declares the matching
+brains for you — no brain settings needed:
 
 ```bash
 git clone https://github.com/slashman413/cowork
-# Claude Code instance → declares opus-4-8, sonnet-5, fable-5, and the account default:
-COWORK_URL=http://<cowork-host>:6868 PRESET=claude HOST=<your-hostname> \
+COWORK_URL=http://<cowork-host>:6868 HOST=<your-hostname> \
   node cowork/deploy/remote-brain-client.mjs
 ```
 
-That's it. On connect the client calls `register_agent` declaring your brains, then
-polls the shared inbox and runs any task addressed to one of them.
+That's it. On connect the client calls `register_agent` **declaring your brains in the
+handshake**, then polls the shared inbox and runs any task addressed to one of them.
 
 - `<cowork-host>` — the machine running the Cowork server (LAN or Tailscale IP; port 6868).
 - `HOST` — a short label for THIS machine (e.g. `aicodegen`). It only shapes the brain
-  ids/labels; it does not route anything.
-- `PRESET=hermes` instead if you run local Qwen/DeepSeek via Hermes.
+  ids/labels; it does not route anything. Defaults to the OS hostname.
 
 ## What brains you end up offering
 
-`PRESET=claude HOST=aicodegen` registers exactly these (from
-[`deploy/presets/claude.json`](deploy/presets/claude.json)):
+Auto-detect uses the presets in [`deploy/presets/`](deploy/presets/); with `HOST=aicodegen`
+you get one brain per model of each CLI found:
 
-| brain id | model |
-|----------|-------|
-| `remote-aicodegen-cc-opus`    | claude-opus-4-8 |
-| `remote-aicodegen-cc-sonnet`  | claude-sonnet-5 |
-| `remote-aicodegen-cc-fable`   | claude-fable-5 |
-| `remote-aicodegen-cc-default` | account default (`claude -p`, no `--model`) |
+| if you have… | brains declared |
+|--------------|-----------------|
+| **`claude`** (Claude Code) | `remote-aicodegen-cc-opus` (claude-opus-4-8), `-cc-sonnet` (claude-sonnet-5), `-cc-fable` (claude-fable-5), `-cc-default` (account default) |
+| **`hermes`** | `remote-aicodegen-ha-qwen35b`, `-ha-qwen27b`, `-ha-deepseek` |
+| **`agy`** (Antigravity) | `remote-aicodegen-agy-default` |
 
 They appear in the dashboard's **Brains** view with an "auto" badge, and can be put
 into any agent's fallback chain or targeted directly with `context.brain`.
+
+Want just one platform's set (e.g. skip the others)? Add `PRESET=claude` (or `hermes`/`agy`).
+
+## No client script? Register straight over MCP
+
+The brains handshake is plain MCP — any client can do it without this helper. Connect
+to `http://<cowork-host>:6868/mcp`; the server's `initialize` **instructions** tell you
+exactly what to send. In short, call `register_agent` once with a `brains` array:
+
+```json
+{ "platform": "antigravity", "agent_name": "aicodegen",
+  "capabilities": ["remote-aicodegen-agy-default"],
+  "brains": [ { "id": "remote-aicodegen-agy-default", "location": "remote", "exec": "agy", "model": "" } ] }
+```
+
+then `list_inbox` → `claim_task` → run → `complete_task`, and `deregister_agent` on exit.
 
 ## Custom set (if a preset doesn't fit)
 

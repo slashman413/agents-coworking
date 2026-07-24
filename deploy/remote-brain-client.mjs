@@ -5,9 +5,12 @@
 // registry), then polls the shared inbox for tasks addressed to ANY of its
 // brains, claims them, runs the matching local model, and reports results back.
 //
-// Config via env (nothing hard-coded). Ways to declare brains (first that is set wins):
+// Zero-config by default: run `COWORK_URL=http://<host>:6868 node remote-brain-client.mjs`
+// and the client AUTO-DETECTS the model CLIs installed here (claude/hermes/agy) and
+// declares the matching brains in its registration handshake — no brain env needed.
+// Override the auto default with any of (first that is set wins):
 //
-//   Preset (easiest) — one flag, standard model set for a platform:
+//   Preset — one flag, standard model set for a platform:
 //     PRESET=claude  HOST=aicodegen          # → deploy/presets/claude.json:
 //       remote-aicodegen-cc-opus (claude-opus-4-8), -cc-sonnet (claude-sonnet-5),
 //       -cc-fable (claude-fable-5), -cc-default (account default)
@@ -33,7 +36,7 @@
 //
 // Node 18+ (global fetch). No npm install. Run: `node remote-brain-client.mjs`.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -49,14 +52,20 @@ const POLL_MS = +(process.env.POLL_MS || 5000);
 const MAX_CONCURRENT = +(process.env.MAX_CONCURRENT || 1);
 const TASK_TIMEOUT_MS = +(process.env.TASK_TIMEOUT_MS || 1800000);
 
-// Resolve the brain list. Precedence: PRESET → BRAINS_FILE → BRAINS → BRAIN_ID.
-// PRESET loads deploy/presets/<name>.json (e.g. `claude` → opus/sonnet/fable/default),
-// substituting {HOST} in ids so `PRESET=claude HOST=aicodegen` yields
-// remote-aicodegen-cc-opus/-sonnet/-fable/-default. See deploy/presets/ + JOIN-AS-A-BRAIN.md.
-let BRAINS;
+// Resolve the brain list. Precedence:
+//   PRESET → BRAINS_FILE → BRAINS → BRAIN_ID → AUTO-DETECT (default).
+// AUTO-DETECT means you can just run `COWORK_URL=… node remote-brain-client.mjs`:
+// the client looks for installed model CLIs (claude / hermes / agy) and declares
+// the matching preset for each — so it propagates its own capabilities on connect
+// with zero config. Env vars only override the auto default. {HOST} is substituted.
+const PRESET_DIR = join(HERE, 'presets');
 function loadJsonWithHost(raw) { return JSON.parse(raw.split('{HOST}').join(HOST)); }
+function preset(name) { return loadJsonWithHost(readFileSync(join(PRESET_DIR, `${name}.json`), 'utf8')); }
+function hasCli(cli) { return spawnSync('sh', ['-c', `command -v ${cli}`], { stdio: 'ignore' }).status === 0; }
+
+let BRAINS;
 if (process.env.PRESET) {
-  BRAINS = loadJsonWithHost(readFileSync(join(HERE, 'presets', `${process.env.PRESET}.json`), 'utf8'));
+  BRAINS = preset(process.env.PRESET);
 } else if (process.env.BRAINS_FILE) {
   BRAINS = loadJsonWithHost(readFileSync(process.env.BRAINS_FILE, 'utf8'));
 } else if (process.env.BRAINS) {
@@ -64,7 +73,17 @@ if (process.env.PRESET) {
 } else if (process.env.BRAIN_ID) {
   BRAINS = [{ id: process.env.BRAIN_ID, exec: EXEC_DEFAULT, model: process.env.MODEL || '' }];
 } else {
-  console.error('Declare brains via PRESET=claude|hermes, BRAINS_FILE=path, BRAINS=<json>, or BRAIN_ID'); process.exit(2);
+  // Auto-detect: declare a preset for every model CLI on PATH.
+  BRAINS = [];
+  for (const [cli, name] of [['claude', 'claude'], ['hermes', 'hermes'], ['agy', 'agy']]) {
+    if (hasCli(cli)) BRAINS.push(...preset(name));
+  }
+  if (!BRAINS.length) {
+    console.error('Auto-detect found no model CLI (claude/hermes/agy) on PATH.\n' +
+      'Install one, or declare brains explicitly: PRESET=claude | BRAINS_FILE=path | BRAINS=<json> | BRAIN_ID=<id>.');
+    process.exit(2);
+  }
+  console.log(`[auto-detect] declaring brains for: ${[...new Set(BRAINS.map(b => b.exec))].join(', ')}`);
 }
 const BRAIN = Object.fromEntries(BRAINS.map(b => [b.id, {
   id: b.id, exec: b.exec || EXEC_DEFAULT, model: b.model || '',
@@ -72,7 +91,10 @@ const BRAIN = Object.fromEntries(BRAINS.map(b => [b.id, {
 }]));
 const MY_IDS = new Set(Object.keys(BRAIN));
 const AGENT_NAME = process.env.AGENT_NAME || `remote-${HOST}`;
-const PLATFORM = EXEC_DEFAULT === 'claude' ? 'claude' : EXEC_DEFAULT === 'agy' ? 'antigravity' : 'hermes';
+// Registration platform reflects the declared brains (a box may be claude-only,
+// hermes-only, or mixed). Derive from the first brain's exec.
+const execToPlatform = e => e === 'claude' ? 'claude' : e === 'agy' ? 'antigravity' : 'hermes';
+const PLATFORM = execToPlatform(Object.values(BRAIN)[0]?.exec || EXEC_DEFAULT);
 
 function need(k) { const v = process.env[k]; if (!v) { console.error(`Missing required env ${k}`); process.exit(2); } return v; }
 
