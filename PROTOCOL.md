@@ -119,9 +119,10 @@ The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
 
 | Tool | Purpose |
 |------|---------|
-| `register_agent` | Register an agent session |
+| `register_agent` | Register an agent session; optionally DECLARE runnable `brains` |
+| `deregister_agent` | Remove the agent and cascade-remove every brain it registered |
 | `heartbeat` | Update agent status |
-| `get_roster` | Query agent roster (254 agents across 14 platforms) |
+| `get_roster` | Query agent roster (~250 agents across 18 divisions) |
 | `create_task` | Create a cross-platform task |
 | `claim_task` | Claim a pending task |
 | `complete_task` | Mark task as done |
@@ -129,6 +130,12 @@ The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
 | `file_report` | File a structured report |
 | `list_reports` | List reports with filters |
 | `get_dashboard` | Get aggregated dashboard data |
+
+**Routing context** — the dispatcher reads these `task.context` fields:
+`agent` (a roster slug or special-executor name → skip the classifier),
+`brain` (pin one brain id; the dispatcher also *publishes* the target remote brain
+here so its client can claim the task), and `division` (override the routed
+division). With none set, the two-stage router picks division → roster agent.
 
 ## 5. SSE Events
 

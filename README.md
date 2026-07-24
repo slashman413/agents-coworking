@@ -13,7 +13,7 @@ pane of glass.
 
 | Platform | Agents | Format |
 |----------|--------|--------|
-| Claude Code | 254 | `.md` with YAML frontmatter |
+| Claude Code | ~250 | `.md` with YAML frontmatter |
 | Antigravity (AGY) | Built-in + skills | `SKILL.md` |
 | Hermes Agent | 39 skills | `SKILL.md` + triggers |
 | Gemini CLI | Converted from source | `.md` subagents |
@@ -111,7 +111,7 @@ You should see:
    MCP endpoint: http://0.0.0.0:6868/mcp
    Web Dashboard: http://0.0.0.0:6868/
    REST API: http://0.0.0.0:6868/api/
-   Roster loaded: 254 agents across 16 divisions
+   Roster loaded: 250 agents across 18 divisions
 ```
 
 ### 4. Open the Dashboard
@@ -178,49 +178,71 @@ MCP can connect to `http://localhost:6868/mcp`.
 ## Task Execution — the Dispatcher
 
 The server includes a **dispatcher** that turns queued tasks into real agent runs.
-Any inbox task carrying a role (`context.role`, a matching tag, or `skill`) is
-claimed automatically and executed by spawning the mapped platform CLI headlessly.
 Output becomes the task `result`; the full transcript is filed as a report.
 
-Role → model mapping (`config.json` → `orchestration.roles`):
+### Two-stage roster routing
 
-| Role | Executor | Model |
-|------|----------|-------|
-| `orchestrator` | Claude Code | claude-fable-5 — decomposes CEO ideas into role-tagged subtasks |
-| `engineer` | Claude Code | claude-opus-4-8 |
-| `engineer-local` | Hermes | deepseek-v4-flash |
-| `planner` | Hermes | Qwen3.6-35B-A3B-NVFP4 (local vLLM :8000) |
-| `researcher` | Hermes | Qwen3.6-27B-NVFP4 (local vLLM :8001) |
-| `sales`, `marketing`, `generalist` | Hermes | Qwen3.6-35B-A3B-NVFP4 |
-| `antigravity` | AGY CLI | account default |
-| `video` | ComfyUI LTX pipeline (`deploy/video-pipeline.sh`) | short vertical promo/shorts — Flux still → LTX img2vid → stitched 1080×1920. **LTX only** (GB10-safe with the 35B up); never Wan/Hunyuan/SVD. |
+An unassigned task is routed in **two stages** by an orchestrator/classifier brain
+(default `Qwen3.6-35B-A3B`, `orchestration.classifier`):
+
+1. **Division** — pick 1 of 18 divisions (testing, engineering, security, …).
+2. **Agent** — pick 1 of ~250 roster agents in that division. The chosen agent's
+   full `.md` **persona** becomes the system prompt.
+
+The agent then runs on a **brain fallback chain** (below). Skip the classifier by
+targeting directly: `context.agent: "<roster-slug>"` or a special-executor name.
+Tag a task `manual` to never auto-execute.
+
+### Executors: special agents + the 250-agent roster
+
+- **Special executors** (`config.json → orchestration.agents`) — only
+  `orchestrator`, `generalist`, `video`; each is `{description, brains: [...]}`
+  with its own chain. `video` runs the ComfyUI **LTX** pipeline
+  (`deploy/video-pipeline.sh`; LTX only — never Wan/Hunyuan/SVD).
+- **Roster agents** — the ~250 personas in the `agency-agents` submodule, grouped
+  into 18 divisions. They have no chain of their own; they run on the division's
+  chain if one is set, else the global default.
+
+### Brain fallback chains (`GET /api/chains`)
+
+- **Global default** — `orchestration.defaultChain`; drag-reorder in the **Brains**
+  view (`PUT /api/chains/default`).
+- **Per-division override** — `orchestration.divisionChains[<division>]`; set/clear
+  in the **Agents** view (`PUT /api/chains/division/:division`; empty = use default).
+
+A chain runs top → bottom: the task runs on `chain[0]`; on failure the dispatcher
+**hands over** to `chain[1]`, then `[2]`… filing a report each attempt, until
+success or the chain is exhausted. Pin a single task to one brain with
+`context.brain: "<id>"`.
 
 ## Brains — named execution identities (model × platform × location)
 
-`config.json → orchestration.brains` (exposed at `GET /api/brains`) names each
-brain the orchestrator can target via a task's `context.brain`, e.g.:
+`config.json → orchestration.brains` (`GET /api/brains`) names each brain a chain
+can reference:
 
 | Alias | Location | Runs |
 |-------|----------|------|
 | `local-ha-qwen35b` / `-qwen27b` / `-deepseek` | local | Hermes on that model |
 | `local-cc-opus` / `-sonnet` / `-fable` | local | Claude Code on that model |
-| `local-agy` / `local-comfy-ltx` | local | Antigravity / ComfyUI-LTX video |
-| `remote-aicodegen-cc-fable` | remote | Claude+Fable on host `aicodegen` |
+| `local-agy-*` / `local-comfy-ltx` | local | Antigravity/Gemini / ComfyUI-LTX video |
+| `remote-<host>-cc-sonnet` | remote | Claude Code on another machine |
 
-A `role` stays the *semantic* category (drives the prompt); a `brain` is *where/
-what* it runs. Set `context.brain` to pin a task. **Local** brains the dispatcher
-spawns; **remote** brains it leaves `pending` for that machine's client to claim
-(poll `list_inbox`, match `context.brain` to your own id, `claim_task`).
+**Local** brains the dispatcher spawns here. **Remote** brains it leaves `pending`
+and **publishes the brain id onto the task's `context.brain`** so that machine's
+client can discover and claim it (the client filters `list_inbox` for tasks whose
+`context.brain` is one of its own ids). If no client claims a remote rung within
+`orchestration.remoteGraceMs` (default 60 s), the dispatcher advances to the next
+brain in the chain, so a clientless remote rung never stalls a task.
 
 ### Auto-registered brains (clients-capability protocol)
 
-A connecting MCP client can DECLARE the brains it can run via the `register_agent`
+A connecting MCP client DECLARES the brains it can run via the `register_agent`
 tool's `brains` field; the server auto-adds them to the registry (marked `dynamic`,
-owned by that client). One machine can offer several models at once — e.g.
-aicodegen declares `remote-aicodegen-cc-opus/-sonnet/-fable`. Auto-registered
-brains persist and are removed **only** by the `deregister_agent` tool or the
-Brains view (never on heartbeat timeout); removal cascades out of every agent
-chain. Manage all of this from the dashboard's **Agents** and **Brains** views.
+owned by that client). One machine can offer several models at once. Auto-registered
+brains persist and are removed **only** by `deregister_agent` or the Brains view
+(never on heartbeat timeout); removal cascades out of the default chain, every
+division chain, and every special agent. Manage all of this from the dashboard's
+**Agents** and **Brains** views.
 
 ### Wiring a remote brain machine
 
@@ -258,32 +280,30 @@ systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-br
 It connects to `COWORK_URL/mcp`, `register_agent`s (declaring its `BRAINS`, which
 auto-register into the registry), then polls and claims only tasks whose
 `context.brain` is one of its brain ids, runs the matching `EXEC`/`MODEL`, and
-`complete_task`s with a filed report — appearing in Active Agents like any other
-worker. **Flexible**: the same script serves any brain by changing env only.
+`complete_task`s with a filed report — appearing in **Connections** like any other
+client. **Flexible**: the same script serves any brain by changing env only.
 **Scalable**: add machines/brains by adding `<name>.env` files; claims are atomic
 (single-process compare-and-set) so even multiple clients on the *same* brain id
-never double-run a task — first claim wins. Brains
-and roles both support a `fallback` for handover. The orchestrator is given the
-brain list so it can route each subtask to the right model on the right instance.
+never double-run a task — first claim wins.
 
-The always-on coordinator agent shown in **Active Agents** as `cowork/orchestrator`
-polls the inbox, LLM-classifies roleless tasks, reclaims orphans, and dispatches;
-transient per-task workers appear as e.g. `hermes/planner (Qwen3.6-35B-A3B-NVFP4)`
-or `pipeline/video (ComfyUI-LTX)` while running.
+The always-on coordinator agent shown in **Connections** as `cowork/orchestrator`
+polls the inbox, two-stage-routes unassigned tasks, reclaims orphans, and
+dispatches; transient per-task workers appear as e.g.
+`testing / Workflow Optimizer · local-ha-qwen35b` or `video · local-comfy-ltx`
+while running.
 
-CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates a task with
-`context.role: "orchestrator"` → the Fable-5 orchestrator decomposes it into
-role-tagged subtasks via `POST /api/inbox` → the dispatcher fans them out to the
-right models → results and full reports appear live on the dashboard.
+CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates ONE task with
+`context.agent: "orchestrator"` → the orchestrator decomposes it into subtasks via
+`POST /api/inbox` → each subtask is two-stage-routed to a roster agent on its brain
+chain → results and full reports appear live on the dashboard.
 
 ### LLM classifier — no task left behind
 
-A roleless task (e.g. a free-text idea filed straight from Discord) no longer
-stalls: the dispatcher runs an **LLM classifier** (default Qwen3.6-35B-A3B via
-Hermes, `orchestration.classifier` in config.json) that reads the task and
-assigns the best-fit role, which then dispatches normally. Set
-`classifier.enabled: false` to keep the old strict behaviour. Tag a task
-`manual` to skip both classification and dispatch.
+An unassigned task (e.g. a free-text idea filed straight from Discord) no longer
+stalls: the dispatcher runs the **two-stage LLM router** (default Qwen3.6-35B-A3B
+via Hermes, `orchestration.classifier` in config.json) that reads the task, picks
+a division, then a roster agent, which then dispatches normally on that agent's
+brain chain. Tag a task `manual` to skip both routing and dispatch.
 
 ### Stale-claim reclaim
 
@@ -314,9 +334,10 @@ Once connected, agents have access to these tools:
 
 | Tool | Description |
 |------|-------------|
-| `register_agent` | Register this agent session (platform, name, capabilities) |
+| `register_agent` | Register this client; optionally DECLARE the `brains` it can run |
+| `deregister_agent` | Remove this client and cascade-remove every brain it registered |
 | `heartbeat` | Update status and current task |
-| `get_roster` | Search 254 agents across all platforms |
+| `get_roster` | Search ~250 agents across 18 divisions |
 | `create_task` | Create a task for another agent/platform |
 | `claim_task` | Claim a pending inbox task |
 | `complete_task` | Mark a task as done with results |
@@ -355,14 +376,19 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/status` | Dashboard overview data |
-| `GET` | `/api/agents` | Active agent list |
+| `GET` | `/api/agents` | All active agents (id → name) |
+| `GET` | `/api/connections` | Live MCP clients (heartbeat) + per-brain ran/submitted counters |
 | `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | `POST` | `/api/inbox` | Create a new task |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
-| `GET` | `/api/reports` | Reports list |
-| `GET` | `/api/reports/:id` | Full report content |
+| `GET` | `/api/reports` / `/api/reports/:id` | Reports list / full content |
 | `GET` | `/api/roster?division=engineering` | Agent roster (filterable) |
-| `GET` | `/api/roster/divisions` | Division metadata |
+| `GET` | `/api/roster-divisions` | Roster grouped by division (for the Agents view) |
+| `GET` | `/api/dispatcher` | Special agents + brains + defaultChain + divisionChains + running |
+| `GET`/`PUT` | `/api/chains`, `/chains/default`, `/chains/division/:div` | Read/edit brain fallback chains |
+| `GET`/`PUT`/`DELETE` | `/api/brains`, `/api/brains/:id` | Brain registry (cascades on delete) |
+| `GET`/`PUT`/`DELETE` | `/api/agents-config`, `/api/agents-config/:name` | Special-executor chains |
+| `GET` | `/api/artifacts/:taskId`, `/:taskId/:file` | List / download task artifacts |
 | `GET` | `/api/config` | Current configuration |
 | `GET` | `/api/events` | SSE event stream |
 
@@ -372,17 +398,19 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 
 ```
 cowork/
-├── config.json              # Central settings file
+├── config.json              # TEMPLATE only — real config at ~/.cowork/config.json
 ├── README.md                # This file
 ├── PROTOCOL.md              # Protocol specification
+├── JOIN-AS-A-BRAIN.md       # Onboarding for a remote brain client
+├── agency-agents/           # git SUBMODULE — the ~250-agent roster
 ├── server/                  # MCP Server + Web UI
-│   ├── package.json
-│   ├── tsconfig.json
 │   ├── src/                 # TypeScript source
 │   └── public/              # Web UI (HTML/CSS/JS)
+├── deploy/                  # systemd units, remote-brain client, presets, skills
 ├── inbox/                   # Task queue (JSON files, auto-managed)
 ├── reports/                 # Generated reports (markdown)
-├── skills/                  # Cross-platform shared skills
+├── artifacts/               # Per-task output files (audio/video/md), downloadable
+├── skills/                  # Cross-platform shared task skills
 ├── decisions/               # Decision log
 └── .status/                 # Runtime state (auto-managed)
 ```
@@ -400,7 +428,7 @@ npx @modelcontextprotocol/inspector http://localhost:6868/mcp
 ```
 
 This opens a web UI at http://localhost:6274 where you can browse and test all
-10 MCP tools interactively.
+MCP tools interactively.
 
 ### curl Examples
 
@@ -510,10 +538,12 @@ curl -X POST http://localhost:6868/mcp \
 
 ### Environment-Specific Overrides
 
-For different environments, create separate config files and specify at startup:
+The real config is read from `~/.cowork/config.json` by default. Point at a
+different file with the `COWORK_CONFIG` env var (and override the port / API key
+without editing any file):
 
 ```bash
-CONFIG_PATH=./config.production.json npm start
+COWORK_CONFIG=~/.cowork/config.staging.json COWORK_PORT=6900 npm start
 ```
 
 ---

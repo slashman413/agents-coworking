@@ -87,7 +87,8 @@ systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-br
 ## How to confirm it worked
 
 - Dashboard **Brains** view lists your brains with an **auto** badge.
-- Dashboard **Active Agents** shows your client; while running a task it appears busy.
+- Dashboard **Connections** shows your client (with per-brain ran/submitted counts);
+  while running a task it appears busy.
 - A task's filed **report** is authored by the brain id that ran it.
 - To leave cleanly and remove your brains: call the `deregister_agent` tool (or remove
   them in the Brains view). Brains are NOT auto-removed on disconnect — they persist
