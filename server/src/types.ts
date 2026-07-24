@@ -17,7 +17,31 @@ export interface RoleConfig {
   model: string;
   /** argv for exec:script roles (the command + args to run). */
   command?: string[];
+  /** Delegate execution to a named brain (see BrainConfig) instead of the
+   *  inline exec/model above. */
+  brain?: string;
   /** Role to hand the task to after a failed attempt (see Dispatcher handover). */
+  fallback?: string;
+}
+
+/**
+ * A "brain" is a concrete execution identity — a specific model on a specific
+ * platform at a specific location. Aliased (e.g. `local-ha-qwen35b`,
+ * `remote-aicodegen-cc-fable`) so the orchestrator can target one directly via
+ * a task's `context.brain`. LOCAL brains are spawned by the dispatcher; REMOTE
+ * brains are left in the inbox for that remote MCP client to claim itself.
+ */
+export interface BrainConfig {
+  /** Human description shown to the orchestrator so it can choose. */
+  description: string;
+  location: 'local' | 'remote';
+  /** local brains: how to run them. */
+  exec?: 'claude' | 'hermes' | 'agy' | 'script';
+  model?: string;
+  command?: string[];
+  /** remote brains: which machine/client (informational + claim-routing hint). */
+  host?: string;
+  /** Brain alias to hand off to after a failed attempt. */
   fallback?: string;
 }
 
@@ -40,6 +64,9 @@ export interface OrchestrationConfig {
   taskTimeoutMs: number;
   defaultRole: string;
   roles: Record<string, RoleConfig>;
+  /** Named execution identities (model×platform×location) the orchestrator can
+   *  target via a task's context.brain. */
+  brains?: Record<string, BrainConfig>;
   /** LLM classifier that assigns roles to roleless tasks. */
   classifier?: ClassifierConfig;
   /** Reclaim in-progress tasks whose claiming agent is gone after this many

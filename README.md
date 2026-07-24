@@ -176,6 +176,25 @@ Role → model mapping (`config.json` → `orchestration.roles`):
 | `antigravity` | AGY CLI | account default |
 | `video` | ComfyUI LTX pipeline (`deploy/video-pipeline.sh`) | short vertical promo/shorts — Flux still → LTX img2vid → stitched 1080×1920. **LTX only** (GB10-safe with the 35B up); never Wan/Hunyuan/SVD. |
 
+## Brains — named execution identities (model × platform × location)
+
+`config.json → orchestration.brains` (exposed at `GET /api/brains`) names each
+brain the orchestrator can target via a task's `context.brain`, e.g.:
+
+| Alias | Location | Runs |
+|-------|----------|------|
+| `local-ha-qwen35b` / `-qwen27b` / `-deepseek` | local | Hermes on that model |
+| `local-cc-opus` / `-sonnet` / `-fable` | local | Claude Code on that model |
+| `local-agy` / `local-comfy-ltx` | local | Antigravity / ComfyUI-LTX video |
+| `remote-aicodegen-cc-fable` | remote | Claude+Fable on host `aicodegen` |
+
+A `role` stays the *semantic* category (drives the prompt); a `brain` is *where/
+what* it runs. Set `context.brain` to pin a task. **Local** brains the dispatcher
+spawns; **remote** brains it leaves `pending` for that machine's client to claim
+(poll `list_inbox`, match `context.brain` to your own id, `claim_task`). Brains
+and roles both support a `fallback` for handover. The orchestrator is given the
+brain list so it can route each subtask to the right model on the right instance.
+
 The always-on coordinator agent shown in **Active Agents** as `cowork/orchestrator`
 polls the inbox, LLM-classifies roleless tasks, reclaims orphans, and dispatches;
 transient per-task workers appear as e.g. `hermes/planner (Qwen3.6-35B-A3B-NVFP4)`

@@ -3,6 +3,18 @@ import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store } from './store.js';
 
+/** A fully-resolved execution plan for one task: what to run, where it shows on
+ *  the dashboard, and where to hand off if it fails. */
+interface ExecPlan {
+  role: string;                 // semantic role driving the prompt ('' if none)
+  label: string;                // worker display + logs
+  platform: string;             // active-agent platform bucket
+  exec: 'claude' | 'hermes' | 'agy' | 'script';
+  model: string;
+  command?: string[];
+  fallback?: { via: 'role' | 'brain'; id: string };
+}
+
 /**
  * Dispatcher — the execution layer that turns queued tasks into real agent runs.
  *
@@ -125,16 +137,78 @@ export class Dispatcher {
     for (const task of pending) {
       if (this.running.size >= orch.maxConcurrent) break;
       if (this.running.has(task.id)) continue;
-      const role = this.resolveRole(task);
-      if (!role) {
-        // No deterministic role — let the LLM classifier assign one (async).
-        if (task.tags?.includes('manual')) continue;
-        this.classify(task);
-        continue;
+      const plan = this.planFor(task);
+      switch (plan.action) {
+        case 'skip': continue;               // manual, or unknown target
+        case 'remote': continue;             // leave in inbox for the remote client to claim
+        case 'classify': this.classify(task); continue;
+        case 'execute':
+          if (!this.depsSatisfied(task)) continue;
+          this.execute(task, plan.exec).catch(e => console.error(`Dispatcher: task ${task.id} failed:`, e));
       }
-      if (!this.depsSatisfied(task)) continue;
-      this.execute(task, role).catch(e => console.error(`Dispatcher: task ${task.id} failed:`, e));
     }
+  }
+
+  /**
+   * Decide how a pending task should run. Resolution order:
+   *   1. `manual` tag                     -> skip
+   *   2. explicit `context.brain` (or the semantic role's `brain`) — a named
+   *      execution identity. LOCAL brain -> execute on it; REMOTE brain -> leave
+   *      in the inbox for that remote MCP client to claim.
+   *   3. semantic role (context.role / tag / skill) -> execute on the role
+   *   4. nothing -> classify (LLM assigns a role)
+   * The semantic role always drives the PROMPT; the brain (when set) only
+   * overrides WHERE/ON-WHAT it runs.
+   */
+  private planFor(task: Task): { action: 'skip' } | { action: 'remote' } | { action: 'classify' } | { action: 'execute'; exec: ExecPlan } {
+    if (task.tags?.includes('manual')) return { action: 'skip' };
+    const roles = this.config.orchestration.roles;
+    const brains = this.config.orchestration.brains || {};
+    const role = this.resolveRole(task) || '';
+
+    const ctxBrain = typeof task.context?.brain === 'string' ? task.context.brain : undefined;
+    const roleBrain = role && roles[role]?.brain;
+    const brainId = (ctxBrain && brains[ctxBrain]) ? ctxBrain : (roleBrain && brains[roleBrain]) ? roleBrain : undefined;
+
+    if (brainId) {
+      const b = brains[brainId];
+      if (b.location === 'remote') return { action: 'remote' };
+      if (!b.exec) return { action: 'skip' };
+      return { action: 'execute', exec: {
+        role, label: `${role || 'task'} · ${brainId}`, platform: this.platformOf(b.exec),
+        exec: b.exec, model: b.model || '', command: b.command,
+        fallback: b.fallback ? { via: 'brain', id: b.fallback } : undefined
+      } };
+    }
+
+    if (role) {
+      const r = roles[role];
+      const short = (r.model || 'default').split('/').pop()!.split(':').pop()!;
+      return { action: 'execute', exec: {
+        role, label: r.exec === 'script' ? `${role} (${r.model || 'pipeline'})` : `${role} (${short})`,
+        platform: this.platformOf(r.exec),
+        exec: r.exec, model: r.model, command: r.command,
+        fallback: r.fallback ? { via: 'role', id: r.fallback } : undefined
+      } };
+    }
+
+    return { action: 'classify' };
+  }
+
+  private platformOf(exec: string): string {
+    return exec === 'claude' ? 'claude' : exec === 'agy' ? 'antigravity' : exec === 'script' ? 'pipeline' : 'hermes';
+  }
+
+  /** Orchestrator-facing description of the brain registry. */
+  private brainsPromptBlock(): string {
+    const brains = this.config.orchestration.brains || {};
+    const ids = Object.keys(brains);
+    if (!ids.length) return '';
+    const lines = ids.map(id => {
+      const b = brains[id];
+      return `  - ${id} [${b.location}]: ${b.description}`;
+    });
+    return `Optionally target a specific BRAIN (a model on a specific instance) by adding "brain":"<id>" to a subtask's context — e.g. {"role":"engineer","brain":"remote-aicodegen-cc-fable"}. LOCAL brains run here automatically; REMOTE brains are left in the inbox for that machine's client to claim. Available brains:\n${lines.join('\n')}`;
   }
 
   /**
@@ -262,6 +336,7 @@ export class Dispatcher {
         `curl -s -X POST http://localhost:${port}/api/inbox -H 'Content-Type: application/json' -d '{"title":"...","description":"...(full standalone instructions)...","from":{"platform":"claude","agent":"orchestrator"},"to":{},"priority":"normal","context":{"role":"<role>"},"tags":["<role>"]}'`,
         '```',
         `Available roles: engineer (Claude Opus — code), engineer-local (deepseek — code, cheaper), planner (product planning), researcher (deep research), sales, marketing, generalist, video (short promo/shorts video via the ComfyUI LTX pipeline).`,
+        this.brainsPromptBlock(),
         `Each subtask description must be fully standalone — the executing agent sees ONLY that description.`,
         `If a subtask must wait for others (e.g. a final synthesis/integration step), add their task ids to its context: {"role":"planner","dependsOn":["<id1>","<id2>"]} — the API response to each POST gives you the created task's id. Dependent tasks are held until all dependencies are done, and their results are automatically shown to the dependent agent.`,
         `After dispatching, output a summary of the plan: which subtasks you created and why. Check existing tasks first with: curl -s http://localhost:${port}/api/inbox?limit=20`,
@@ -292,9 +367,9 @@ export class Dispatcher {
     }
   }
 
-  private async execute(task: Task, role: string): Promise<void> {
+  private async execute(task: Task, plan: ExecPlan): Promise<void> {
     const orch = this.config.orchestration;
-    const roleCfg = orch.roles[role];
+    const role = plan.role;
     if (!this.agentId) return;
 
     const claimed = this.store.claimTask({ taskId: task.id, agentId: this.agentId });
@@ -304,28 +379,21 @@ export class Dispatcher {
     this.store.saveTask(claimed);
 
     // Surface the worker as its own active agent so the dashboard shows WHO
-    // is working (e.g. hermes/planner (Qwen3.6-35B-A3B-NVFP4)), not just the
-    // dispatcher. Deregistered when the run ends.
-    const modelShort = roleCfg.exec === 'script'
-      ? (roleCfg.model || 'pipeline')
-      : (roleCfg.model || 'default').split('/').pop()!.split(':').pop()!;
-    const workerPlatform = roleCfg.exec === 'claude' ? 'claude'
-      : roleCfg.exec === 'agy' ? 'antigravity'
-      : roleCfg.exec === 'script' ? 'pipeline' : 'hermes';
+    // is working (e.g. hermes/engineer · local-cc-opus), not just the coordinator.
     const worker = this.store.registerAgent({
-      platform: workerPlatform,
-      agentName: `${role} (${modelShort})`,
+      platform: plan.platform,
+      agentName: plan.label,
       sessionId: 'dispatcher-worker',
-      capabilities: [role],
+      capabilities: [role || plan.label],
       currentTask: task.title
     });
     this.store.updateHeartbeat({ agentId: worker.id, status: 'working', currentTask: task.title });
 
-    this.running.set(task.id, { role, startedAt: Date.now(), workerAgentId: worker.id });
-    console.log(`Dispatcher: [${role}/${roleCfg.exec}:${roleCfg.model || 'default'}] running task ${task.id} — ${task.title}`);
+    this.running.set(task.id, { role: plan.label, startedAt: Date.now(), workerAgentId: worker.id });
+    console.log(`Dispatcher: [${plan.label}/${plan.exec}:${plan.model || 'default'}] running task ${task.id} — ${task.title}`);
 
     const prompt = this.buildPrompt(task, role);
-    const argv = this.buildArgv(roleCfg, prompt);
+    const argv = this.buildArgv({ exec: plan.exec, model: plan.model, command: plan.command }, prompt);
 
     const output = await new Promise<{ ok: boolean; text: string }>((resolve) => {
       const child = spawn(argv[0], argv.slice(1), {
@@ -367,35 +435,41 @@ export class Dispatcher {
     let report: { id: string; filePath: string } | null = null;
     try {
       report = this.store.fileReport({
-        title: `[${role}] ${task.title}`,
+        title: `[${plan.label}] ${task.title}`,
         type: 'task-output',
-        author_platform: roleCfg.exec === 'claude' ? 'claude' : roleCfg.exec === 'agy' ? 'antigravity' : 'hermes',
-        author_agent: `${role} (${roleCfg.model || 'default'})`,
+        author_platform: plan.platform === 'pipeline' ? 'cowork' : plan.platform,
+        author_agent: plan.label,
         content: output.text,
         status: output.ok ? 'final' : 'draft',
-        tags: [role, 'dispatcher', output.ok ? 'success' : 'failed']
+        tags: [role || plan.label, 'dispatcher', output.ok ? 'success' : 'failed']
       });
     } catch (e) {
       console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
     }
 
     if (!output.ok) {
-      // Handover: retry up to inbox.maxRetries, downgrading to the role's
-      // fallback (if configured) on each failed attempt.
+      // Handover: retry up to inbox.maxRetries, handing off to the target's
+      // fallback (a role or a brain) on each failed attempt.
       const fresh = this.store.getTask(task.id);
       if (fresh) {
         const attempts = (Number(fresh.context?.attempts) || 0) + 1;
         const maxRetries = this.config.inbox.maxRetries;
         if (attempts < maxRetries) {
-          const nextRole = roleCfg.fallback && this.config.orchestration.roles[roleCfg.fallback]
-            ? roleCfg.fallback : role;
+          const fb = plan.fallback;
+          const ctx: Record<string, unknown> = { ...(fresh.context || {}), attempts, dispatched: false };
+          let handoffLabel = plan.label;
+          if (fb?.via === 'brain' && this.config.orchestration.brains?.[fb.id]) {
+            ctx.brain = fb.id; handoffLabel = fb.id;
+          } else if (fb?.via === 'role' && this.config.orchestration.roles[fb.id]) {
+            ctx.role = fb.id; delete ctx.brain; handoffLabel = fb.id;  // role fallback clears any brain override
+          }
           fresh.status = 'pending';
           delete fresh.claimedAt;
           delete fresh.claimedBy;
-          fresh.context = { ...(fresh.context || {}), attempts, role: nextRole, dispatched: false };
-          fresh.result = `attempt ${attempts}/${maxRetries} failed as "${role}"${nextRole !== role ? ` — handed over to "${nextRole}"` : ' — retrying'}: ${output.text.slice(0, 300)}`;
+          fresh.context = ctx;
+          fresh.result = `attempt ${attempts}/${maxRetries} failed on "${plan.label}"${handoffLabel !== plan.label ? ` — handed over to "${handoffLabel}"` : ' — retrying'}: ${output.text.slice(0, 300)}`;
           this.store.saveTask(fresh);
-          console.log(`Dispatcher: handover — task ${task.id} attempt ${attempts} failed as ${role}, requeued as ${nextRole}`);
+          console.log(`Dispatcher: handover — task ${task.id} attempt ${attempts} failed on ${plan.label}, requeued as ${handoffLabel}`);
           return;
         }
       }

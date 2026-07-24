@@ -67,6 +67,17 @@
       "timeoutMs": 180000
     },
     "staleClaimMs": 1800000,
+    "brains": {
+      "local-ha-qwen35b": { "description": "Local Hermes Agent using Qwen3.6-35B-A3B (local vLLM :8000)", "location": "local", "exec": "hermes", "model": "nvidia/Qwen3.6-35B-A3B-NVFP4" },
+      "local-ha-qwen27b": { "description": "Local Hermes Agent using Qwen3.6-27B (local vLLM :8001)", "location": "local", "exec": "hermes", "model": "nvidia/Qwen3.6-27B-NVFP4" },
+      "local-ha-deepseek": { "description": "Local Hermes Agent using deepseek-v4-flash (cloud model)", "location": "local", "exec": "hermes", "model": "deepseek:deepseek-v4-flash" },
+      "local-cc-opus": { "description": "Local Claude Code using Opus 4.8", "location": "local", "exec": "claude", "model": "claude-opus-4-8" },
+      "local-cc-sonnet": { "description": "Local Claude Code using Sonnet 5", "location": "local", "exec": "claude", "model": "claude-sonnet-5" },
+      "local-cc-fable": { "description": "Local Claude Code using Fable 5", "location": "local", "exec": "claude", "model": "claude-fable-5" },
+      "local-agy": { "description": "Local Antigravity (AGY) CLI, account default model", "location": "local", "exec": "agy", "model": "" },
+      "local-comfy-ltx": { "description": "Local ComfyUI LTX video pipeline (short vertical promo)", "location": "local", "exec": "script", "command": ["/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"] },
+      "remote-aicodegen-cc-fable": { "description": "Remote MCP client on host 'aicodegen' running Claude using Fable", "location": "remote", "host": "aicodegen", "exec": "claude", "model": "claude-fable-5" }
+    },
     "roles": {
       "orchestrator": {
         "exec": "hermes",

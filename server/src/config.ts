@@ -55,6 +55,7 @@ const defaultConfig: Config = {
     taskTimeoutMs: 1800000,
     defaultRole: 'generalist',
     roles: {},
+    brains: {},
     classifier: {
       enabled: false,
       exec: 'hermes',
@@ -91,6 +92,7 @@ export function loadConfig(): Config {
       ...defaultConfig.orchestration,
       ...(loadedConfig.orchestration || {}),
       roles: loadedConfig.orchestration?.roles || {},
+      brains: loadedConfig.orchestration?.brains || {},
       classifier: {
         ...defaultConfig.orchestration.classifier!,
         ...(loadedConfig.orchestration?.classifier || {})

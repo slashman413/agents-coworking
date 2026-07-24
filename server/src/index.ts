@@ -94,9 +94,16 @@ async function main() {
   app.get('/api/dispatcher', (_req, res) => {
     res.json({
       enabled: config.orchestration.enabled,
-      roles: Object.fromEntries(Object.entries(config.orchestration.roles).map(([k, v]) => [k, `${v.exec}:${v.model || 'default'}`])),
+      roles: Object.fromEntries(Object.entries(config.orchestration.roles).map(([k, v]) => [k, v.brain ? `→brain:${v.brain}` : `${v.exec}:${v.model || 'default'}`])),
+      brains: config.orchestration.brains || {},
       running: dispatcher.getRunning()
     });
+  });
+
+  // The brain registry — named execution identities (model×platform×location)
+  // that the orchestrator and remote clients can target via a task's context.brain.
+  app.get('/api/brains', (_req, res) => {
+    res.json(config.orchestration.brains || {});
   });
 
   // Graceful shutdown for systemd (SIGTERM) and Ctrl-C (SIGINT)
