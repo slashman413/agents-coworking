@@ -45,7 +45,7 @@ const defaultConfig: Config = {
     corsOrigin: '*'
   },
   paths: {
-    agencyAgents: '../agency-agents',
+    agencyAgents: './agency-agents',
     inbox: './inbox',
     reports: './reports',
     skills: './skills',

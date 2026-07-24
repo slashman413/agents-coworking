@@ -30,7 +30,14 @@ pane of glass.
 
 - **Node.js** ≥ 20 (tested with v22)
 - **npm** ≥ 10
-- The [agency-agents](../agency-agents) repo cloned locally
+- The [agency-agents](./agency-agents) repo — bundled as a **git submodule** at
+  `cowork/agency-agents` (the 250-agent roster). Clone with submodules:
+
+  ```bash
+  git clone --recurse-submodules https://github.com/slashman413/cowork
+  # already cloned without it? initialise the submodule:
+  git submodule update --init
+  ```
 
 ### 1. Install Dependencies
 
@@ -60,7 +67,7 @@ Edit `~/.cowork/config.json` to match your environment:
     "apiKey": null          // ← Set a string to require API key auth, or null for open
   },
   "paths": {
-    "agencyAgents": "../agency-agents",  // ← Path to agency-agents repo
+    "agencyAgents": "./agency-agents",  // ← Path to agency-agents repo
     "inbox": "./inbox",
     "reports": "./reports",
     "skills": "./skills",
@@ -80,7 +87,7 @@ Edit `~/.cowork/config.json` to match your environment:
 | `server.port` | `6868` | HTTP port for MCP endpoint + Web UI |
 | `server.host` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
 | `server.apiKey` | `null` | API key for authentication (null = no auth) |
-| `paths.agencyAgents` | `../agency-agents` | Path to the agency-agents repo |
+| `paths.agencyAgents` | `./agency-agents` | Path to the agency-agents repo |
 | `platforms.*.enabled` | `true` | Enable/disable individual platforms |
 | `platforms.*.agentsDir` | varies | Where platform-specific agents live on disk |
 | `services.*.enabled` | `false` | Enable/disable service health monitoring |
@@ -464,7 +471,7 @@ curl -X POST http://localhost:6868/mcp \
     "apiKey": null
   },
   "paths": {
-    "agencyAgents": "../agency-agents",
+    "agencyAgents": "./agency-agents",
     "inbox": "./inbox",
     "reports": "./reports",
     "skills": "./skills",
