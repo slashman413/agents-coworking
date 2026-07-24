@@ -186,7 +186,7 @@
         "location": "local",
         "exec": "script",
         "command": [
-          "/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"
+          "/home/wayne/workspace/github/slashman413/cowork/deploy/video-pipeline.sh"
         ]
       }
     }

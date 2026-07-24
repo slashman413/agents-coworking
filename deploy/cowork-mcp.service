@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=PATH=/home/wayne/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-WorkingDirectory=/home/wayne/workspace/github/slashman413/agents-coworking/server
+WorkingDirectory=/home/wayne/workspace/github/slashman413/cowork/server
 ExecStart=/home/wayne/.local/bin/node dist/index.js
 Restart=always
 RestartSec=5
