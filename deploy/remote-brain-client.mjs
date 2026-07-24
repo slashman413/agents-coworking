@@ -5,9 +5,16 @@
 // registry), then polls the shared inbox for tasks addressed to ANY of its
 // brains, claims them, runs the matching local model, and reports results back.
 //
-// Config via env (nothing hard-coded). Two ways to declare brains:
+// Config via env (nothing hard-coded). Ways to declare brains (first that is set wins):
 //
-//   Multiple (recommended) — one client, several models:
+//   Preset (easiest) — one flag, standard model set for a platform:
+//     PRESET=claude  HOST=aicodegen          # → deploy/presets/claude.json:
+//       remote-aicodegen-cc-opus (claude-opus-4-8), -cc-sonnet (claude-sonnet-5),
+//       -cc-fable (claude-fable-5), -cc-default (account default)
+//     PRESET=hermes  HOST=box2               # → qwen35b / qwen27b / deepseek
+//     (BRAINS_FILE=/path/to/list.json also works; {HOST} is substituted.)
+//
+//   Multiple explicit — one client, several models:
 //     BRAINS='[{"id":"remote-aicodegen-cc-opus","model":"claude-opus-4-8"},
 //              {"id":"remote-aicodegen-cc-sonnet","model":"claude-sonnet-5"},
 //              {"id":"remote-aicodegen-cc-fable","model":"claude-fable-5"}]'
@@ -27,7 +34,12 @@
 // Node 18+ (global fetch). No npm install. Run: `node remote-brain-client.mjs`.
 
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import os from 'node:os';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 
 const URL_BASE = need('COWORK_URL').replace(/\/$/, '');
 const API_KEY = process.env.COWORK_API_KEY || '';
@@ -37,14 +49,22 @@ const POLL_MS = +(process.env.POLL_MS || 5000);
 const MAX_CONCURRENT = +(process.env.MAX_CONCURRENT || 1);
 const TASK_TIMEOUT_MS = +(process.env.TASK_TIMEOUT_MS || 1800000);
 
-// Resolve the brain list.
+// Resolve the brain list. Precedence: PRESET → BRAINS_FILE → BRAINS → BRAIN_ID.
+// PRESET loads deploy/presets/<name>.json (e.g. `claude` → opus/sonnet/fable/default),
+// substituting {HOST} in ids so `PRESET=claude HOST=aicodegen` yields
+// remote-aicodegen-cc-opus/-sonnet/-fable/-default. See deploy/presets/ + JOIN-AS-A-BRAIN.md.
 let BRAINS;
-if (process.env.BRAINS) {
-  BRAINS = JSON.parse(process.env.BRAINS);
+function loadJsonWithHost(raw) { return JSON.parse(raw.split('{HOST}').join(HOST)); }
+if (process.env.PRESET) {
+  BRAINS = loadJsonWithHost(readFileSync(join(HERE, 'presets', `${process.env.PRESET}.json`), 'utf8'));
+} else if (process.env.BRAINS_FILE) {
+  BRAINS = loadJsonWithHost(readFileSync(process.env.BRAINS_FILE, 'utf8'));
+} else if (process.env.BRAINS) {
+  BRAINS = loadJsonWithHost(process.env.BRAINS);
 } else if (process.env.BRAIN_ID) {
   BRAINS = [{ id: process.env.BRAIN_ID, exec: EXEC_DEFAULT, model: process.env.MODEL || '' }];
 } else {
-  console.error('Set BRAINS (JSON array) or BRAIN_ID'); process.exit(2);
+  console.error('Declare brains via PRESET=claude|hermes, BRAINS_FILE=path, BRAINS=<json>, or BRAIN_ID'); process.exit(2);
 }
 const BRAIN = Object.fromEntries(BRAINS.map(b => [b.id, {
   id: b.id, exec: b.exec || EXEC_DEFAULT, model: b.model || '',

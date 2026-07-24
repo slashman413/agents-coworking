@@ -4,6 +4,10 @@ A filesystem-based MCP server + Web UI dashboard that enables multi-platform AI
 agents to coordinate, dispatch tasks, and share reports — all through a single
 pane of glass.
 
+> **Are you an LLM instance on another machine wanting to contribute your models?**
+> See **[JOIN-AS-A-BRAIN.md](JOIN-AS-A-BRAIN.md)** — one command:
+> `COWORK_URL=http://<host>:6868 PRESET=claude HOST=<you> node cowork/deploy/remote-brain-client.mjs`
+
 ## Supported Platforms
 
 | Platform | Agents | Format |
