@@ -56,6 +56,9 @@ class App {
     this.activity = [];
     this.inboxFilter = '';
     this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
+    this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
+    this.chatSel = { brain: '', division: '', agent: '' };
+    this.chatBusy = false;
 
     this.contentEl = document.getElementById('content');
     this.viewTitleEl = document.getElementById('view-title');
@@ -186,7 +189,7 @@ class App {
       item.classList.toggle('active', item.dataset.view === hash);
     });
     const titles = {
-      dashboard: 'Dashboard', connections: 'Connections', inbox: 'Task Inbox',
+      dashboard: 'Dashboard', chat: 'Chat', connections: 'Connections', inbox: 'Task Inbox',
       reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
@@ -196,6 +199,7 @@ class App {
   async renderCurrentView() {
     try {
       switch (this.currentView) {
+        case 'chat': await this.renderChat(); break;
         case 'connections': await this.renderConnections(); break;
         case 'inbox': await this.renderInbox(); break;
         case 'reports': await this.renderReports(); break;
@@ -331,6 +335,135 @@ class App {
   }
 
   // ── Inbox ──────────────────────────────────────────────────────────────
+
+  // ── Chat (dispatch a task to a brain/agent and stream back its result) ─────
+
+  async renderChat() {
+    const [brains, divisions] = await Promise.all([this.api.get('/brains'), this.api.get('/roster-divisions')]);
+    this._chatDivisions = divisions;
+    const sel = 'padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem';
+    const brainOpts = ['<option value="">🧠 Auto (route via chain)</option>']
+      .concat(Object.keys(brains).sort().map(b => `<option value="${esc(b)}">${esc(b)}</option>`)).join('');
+    const divOpts = ['<option value="">— any division —</option>']
+      .concat(Object.entries(divisions).sort().map(([d, i]) => `<option value="${esc(d)}">${esc(i.label || d)} (${i.agents.length})</option>`)).join('');
+
+    this.contentEl.innerHTML = `
+      <div style="display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:420px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+          <select id="chat-brain" style="${sel}">${brainOpts}</select>
+          <select id="chat-div" style="${sel}">${divOpts}</select>
+          <select id="chat-agent" style="${sel}"><option value="">— none (chat brain directly) —</option></select>
+          <button id="chat-new" class="btn" style="font-size:0.78rem;margin-left:auto">＋ New chat</button>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px">Each message is dispatched as a task; the reply is its result. Pick a brain (or Auto), optionally a division + roster agent — with no agent you chat the brain directly.</div>
+        <div id="chat-msgs" style="flex:1;overflow-y:auto;padding:8px;border:1px solid var(--bg-tertiary);border-radius:12px;background:var(--bg-primary)"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <textarea id="chat-input" rows="2" placeholder="Message…  (Enter to send · Shift+Enter = newline)" style="flex:1;padding:9px 12px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:10px;color:inherit;font:inherit;font-size:0.88rem;resize:vertical"></textarea>
+          <button id="chat-send" class="btn btn-primary" style="padding:0 18px">Send</button>
+        </div>
+      </div>`;
+
+    const brainEl = this.contentEl.querySelector('#chat-brain');
+    const divEl = this.contentEl.querySelector('#chat-div');
+    const agentEl = this.contentEl.querySelector('#chat-agent');
+    brainEl.value = this.chatSel.brain || '';
+    divEl.value = this.chatSel.division || '';
+    this.populateChatAgents(this.chatSel.division);
+    agentEl.value = this.chatSel.agent || '';
+
+    brainEl.addEventListener('change', () => { this.chatSel.brain = brainEl.value; });
+    divEl.addEventListener('change', () => { this.chatSel.division = divEl.value; this.chatSel.agent = ''; this.populateChatAgents(divEl.value); });
+    agentEl.addEventListener('change', () => { this.chatSel.agent = agentEl.value; });
+
+    const input = this.contentEl.querySelector('#chat-input');
+    const doSend = () => { const t = input.value.trim(); if (t && !this.chatBusy) { input.value = ''; this.sendChat(t); } };
+    this.contentEl.querySelector('#chat-send').addEventListener('click', doSend);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
+    this.contentEl.querySelector('#chat-new').addEventListener('click', () => { this.chatMessages = []; this.renderChatMessages(); });
+
+    this.renderChatMessages();
+    input.focus();
+  }
+
+  populateChatAgents(division) {
+    const el = this.contentEl.querySelector('#chat-agent');
+    if (!el) return;
+    const info = division && this._chatDivisions ? this._chatDivisions[division] : null;
+    const opts = info ? info.agents.slice().sort((a, b) => a.name.localeCompare(b.name))
+      .map(a => `<option value="${esc(a.slug)}">${esc(a.name)}</option>`).join('') : '';
+    el.innerHTML = '<option value="">— none (chat brain directly) —</option>' + opts;
+    el.disabled = !info;
+  }
+
+  chatBubble(m) {
+    const user = m.role === 'user';
+    const body = user ? esc(m.content).replace(/\n/g, '<br>')
+      : (m.pending ? '<span style="opacity:.6">▋ thinking…</span>' : md(m.content || '(no output)'));
+    const meta = m.meta ? `<div style="font-size:0.66rem;opacity:.6;margin-bottom:3px">${esc(m.meta)}</div>` : '';
+    return `<div style="display:flex;justify-content:${user ? 'flex-end' : 'flex-start'};margin:8px 0">
+      <div class="md-block" style="max-width:80%;padding:9px 12px;border-radius:12px;overflow-x:auto;font-size:0.88rem;line-height:1.5;background:${user ? '#7C3AED' : 'var(--bg-secondary)'};color:${user ? '#fff' : 'inherit'}">${meta}${body}</div>
+    </div>`;
+  }
+
+  renderChatMessages() {
+    const box = this.contentEl.querySelector('#chat-msgs');
+    if (!box) return;
+    box.innerHTML = this.chatMessages.length
+      ? this.chatMessages.map(m => this.chatBubble(m)).join('')
+      : '<div style="color:var(--text-muted);text-align:center;margin-top:40px;font-size:0.85rem">Start a conversation — your message is dispatched to the selected brain/agent and the reply is the task result.</div>';
+    box.scrollTop = box.scrollHeight;
+  }
+
+  buildChatDescription() {
+    const done = this.chatMessages.filter(m => !m.pending);
+    if (done.length <= 1) return done[done.length - 1]?.content || '';
+    return done.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+  }
+
+  async sendChat(text) {
+    this.chatBusy = true;
+    const { brain, division, agent } = this.chatSel;
+    const context = {};
+    if (brain) context.brain = brain;
+    if (agent) context.agent = agent; else if (division) context.division = division;
+    const target = agent || (division ? `division:${division}` : (brain || 'auto'));
+    this.chatMessages.push({ role: 'user', content: text });
+    const ph = { role: 'assistant', content: '', pending: true, meta: `↳ ${target}${brain && agent ? ' · ' + brain : ''}` };
+    this.chatMessages.push(ph);
+    this.renderChatMessages();
+    try {
+      const task = await this.api.post('/inbox', {
+        title: text.slice(0, 60) || 'chat',
+        description: this.buildChatDescription(),
+        from: { platform: 'chat', agent: 'dashboard' },
+        context, tags: ['chat']
+      });
+      const done = await this.pollChatTask(task.id);
+      const c = done.context || {};
+      const ranAgent = c.ranAgent ? (c.ranDivision ? `${c.ranDivision}/${c.ranAgent}` : c.ranAgent) : '';
+      const ranBrain = c.ranBrain || c.brain || brain || '';
+      ph.pending = false;
+      ph.content = done.status === 'done' ? (done.result || '(no output)')
+        : `⚠️ task ${done.status}${done.result ? ': ' + done.result : ''}`;
+      ph.meta = [ranAgent, ranBrain].filter(Boolean).join(' · ') || null;
+    } catch (e) {
+      ph.pending = false; ph.content = `⚠️ ${e.message}`;
+    } finally {
+      this.chatBusy = false;
+      this.renderChatMessages();
+    }
+  }
+
+  async pollChatTask(id, timeoutMs = 300000) {
+    const start = Date.now();
+    for (;;) {
+      await new Promise(r => setTimeout(r, 2000));
+      let t;
+      try { t = await this.api.get(`/inbox/${encodeURIComponent(id)}`); } catch { t = null; }
+      if (t && (t.status === 'done' || t.status === 'rejected')) return t;
+      if (Date.now() - start > timeoutMs) return { status: 'timed-out', result: '(no response within 5 min)', context: {} };
+    }
+  }
 
   async renderInbox() {
     const q = this.inboxFilter ? `?status=${this.inboxFilter}&limit=100` : '?limit=100';

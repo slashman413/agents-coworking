@@ -25,6 +25,13 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
     }));
   });
 
+  // Single task by id — used by the Chat UI to poll a dispatched task to completion.
+  router.get('/inbox/:id', (req, res) => {
+    const task = store.getTask(req.params.id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    res.json(task);
+  });
+
   router.post('/inbox', (req, res) => {
     try {
       const body = req.body || {};
