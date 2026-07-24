@@ -37,7 +37,7 @@
 // Node 18+ (global fetch). No npm install. Run: `node remote-brain-client.mjs`.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import os from 'node:os';
@@ -145,17 +145,19 @@ async function connect() {
 }
 
 // ── Task execution ───────────────────────────────────────────────────────────
-function buildPrompt(task) {
+function buildPrompt(task, artDir) {
   const role = task.context?.role || 'agent';
   const lines = [
     `You are the "${role}" agent (brain: ${task.context?.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
     ``, `# Task: ${task.title}`, ``, task.description, ``
   ];
   if (task.context && Object.keys(task.context).length) lines.push('# Context', '```json', JSON.stringify(task.context, null, 2), '```', '');
-  lines.push('Your final stdout becomes the task result shown on the dashboard.');
+  lines.push(
+    `If you generate any files (reports, media, data), save them to the directory: ${artDir} (also in $COWORK_ARTIFACTS_DIR) — they are uploaded to the dashboard as downloadable artifacts when the task completes.`,
+    'Your final stdout becomes the task result shown on the dashboard.');
   return lines.join('\n');
 }
-function runModel(brain, prompt) {
+function runModel(brain, prompt, artDir) {
   const argv = brain.exec === 'claude' ? ['claude', '-p', prompt, ...(brain.model ? ['--model', brain.model] : []), '--dangerously-skip-permissions']
     : brain.exec === 'hermes' ? ['hermes', ...(brain.model ? ['-m', brain.model] : []), '-z', prompt]
     : brain.exec === 'agy' ? ['agy', '-p', prompt]
@@ -164,7 +166,7 @@ function runModel(brain, prompt) {
     : null;
   if (!argv) return Promise.resolve({ ok: false, text: `unknown/misconfigured exec ${brain.exec}` });
   return new Promise((resolve) => {
-    const child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, COWORK_ARTIFACTS_DIR: artDir } });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill('SIGTERM'); resolve({ ok: false, text: `TIMEOUT\n${out}\n${err}` }); }, TASK_TIMEOUT_MS);
     child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d);
@@ -176,13 +178,36 @@ function runModel(brain, prompt) {
     });
   });
 }
+// Upload every file the model dropped in artDir to the server's per-task
+// artifacts dir (raw binary POST), so the web UI can serve them for download.
+async function uploadArtifacts(taskId, artDir) {
+  let files = [];
+  try { files = readdirSync(artDir).filter(f => { try { return statSync(join(artDir, f)).isFile(); } catch { return false; } }); }
+  catch { return 0; }
+  let n = 0;
+  for (const f of files) {
+    try {
+      const res = await fetch(`${URL_BASE}/api/artifacts/${encodeURIComponent(taskId)}/${encodeURIComponent(f)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}) },
+        body: readFileSync(join(artDir, f))
+      });
+      if (res.ok) { n++; } else { console.error(`[${AGENT_NAME}] artifact ${f} upload → HTTP ${res.status}`); }
+    } catch (e) { console.error(`[${AGENT_NAME}] artifact ${f} upload failed:`, e.message); }
+  }
+  return n;
+}
 async function handle(task, agentId) {
   const brain = BRAIN[task.context.brain];
   running.add(task.id);
+  const artDir = join(os.tmpdir(), 'cowork-artifacts', task.id);
+  mkdirSync(artDir, { recursive: true });
   console.log(`[${AGENT_NAME}] claimed ${task.id} on ${brain.id} — ${task.title}`);
   try {
     await tool('heartbeat', { agent_id: agentId, status: 'working', current_task: task.title });
-    const { ok, text } = await runModel(brain, buildPrompt(task));
+    const { ok, text } = await runModel(brain, buildPrompt(task, artDir), artDir);
+    const uploaded = await uploadArtifacts(task.id, artDir);
+    if (uploaded) console.log(`[${AGENT_NAME}] uploaded ${uploaded} artifact(s) for ${task.id}`);
     let reportPath;
     try {
       const rep = await tool('file_report', { title: `[${brain.id}] ${task.title}`, type: 'task-output', author_platform: PLATFORM, author_agent: brain.id, content: text, status: ok ? 'final' : 'draft', tags: [brain.id, 'remote-brain', ok ? 'success' : 'failed'] });
@@ -195,6 +220,7 @@ async function handle(task, agentId) {
     console.error(`[${AGENT_NAME}] error on ${task.id}:`, e.message);
   } finally {
     running.delete(task.id);
+    try { rmSync(artDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
     await tool('heartbeat', { agent_id: agentId, status: running.size ? 'working' : 'idle' }).catch(() => {});
   }
 }

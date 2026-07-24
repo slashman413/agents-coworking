@@ -234,6 +234,12 @@ client can discover and claim it (the client filters `list_inbox` for tasks whos
 `orchestration.remoteGraceMs` (default 60 s), the dispatcher advances to the next
 brain in the chain, so a clientless remote rung never stalls a task.
 
+**Artifacts** work for both: local brains save files to `$COWORK_ARTIFACTS_DIR`
+(the dispatcher collects them from disk); remote brains save to the same env dir
+and the client **uploads** each file via `POST /api/artifacts/:taskId/:file`.
+Either way they land in `artifacts/<task-id>/` and become downloadable from the
+Inbox.
+
 ### Auto-registered brains (clients-capability protocol)
 
 A connecting MCP client DECLARES the brains it can run via the `register_agent`
@@ -388,7 +394,7 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `GET`/`PUT` | `/api/chains`, `/chains/default`, `/chains/division/:div` | Read/edit brain fallback chains |
 | `GET`/`PUT`/`DELETE` | `/api/brains`, `/api/brains/:id` | Brain registry (cascades on delete) |
 | `GET`/`PUT`/`DELETE` | `/api/agents-config`, `/api/agents-config/:name` | Special-executor chains |
-| `GET` | `/api/artifacts/:taskId`, `/:taskId/:file` | List / download task artifacts |
+| `GET`/`POST` | `/api/artifacts/:taskId`, `/:taskId/:file` | List/download; POST (raw body) uploads a file from a remote brain |
 | `GET` | `/api/config` | Current configuration |
 | `GET` | `/api/events` | SSE event stream |
 

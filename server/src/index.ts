@@ -171,6 +171,30 @@ async function main() {
     if (!file.startsWith(artifactsRoot) || !fs.existsSync(file)) return res.status(404).json({ error: 'not found' });
     res.download(file);
   });
+  // Upload — a REMOTE brain client pushes each file it produced into the task's
+  // artifacts dir (the local dispatcher collects them from disk instead). Raw
+  // binary body so any size/type streams; path-guarded; stamps task.artifacts so
+  // the inbox card lists it, and /api/artifacts/:taskId already serves it live.
+  app.post('/api/artifacts/:taskId/:file', express.raw({ type: '*/*', limit: '256mb' }), (req, res) => {
+    try {
+      const taskId = path.basename(req.params.taskId);
+      const fileName = path.basename(req.params.file);
+      if (!fileName || fileName === '.' || fileName === '..') throw new Error('invalid filename');
+      const dir = path.join(artifactsRoot, taskId);
+      const dest = path.join(dir, fileName);
+      if (!dest.startsWith(artifactsRoot + path.sep)) throw new Error('path escape');
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+      if (!body.length) throw new Error('empty body');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(dest, body);
+      const task = store.getTask(taskId);
+      if (task) {
+        task.artifacts = [...new Set([...(task.artifacts || []), fileName])];
+        store.saveTask(task);
+      }
+      res.json({ ok: true, taskId, file: fileName, bytes: body.length });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
 
   // ── Agents registry (worker profiles with an ordered brain chain) ──────────
   app.get('/api/agents-config', (_req, res) => res.json(config.orchestration.agents || {}));
