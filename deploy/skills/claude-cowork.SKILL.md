@@ -12,8 +12,28 @@ is the shared coordination hub for all AI agents on this box. Repo:
 
 ## Workflow
 
-1. **Register once per session** before other calls:
-   `register_agent(platform: "claude", agent_name: "<short name>")` → save the returned `id`.
+1. **Register once per session** before other calls — and **declare your local Claude
+   brains** via the clients-capability handshake so they propagate into the registry
+   (they show under **Connections** and are targetable via `context.brain`):
+   ```
+   register_agent(
+     platform: "claude",
+     agent_name: "<short name for this session/box>",
+     brains: [
+       { id: "local-cc-opus",   location: "local", exec: "claude", model: "claude-opus-4-8" },
+       { id: "local-cc-sonnet", location: "local", exec: "claude", model: "claude-sonnet-5" },
+       { id: "local-cc-fable",  location: "local", exec: "claude", model: "claude-fable-5" }
+     ]
+   )
+   ```
+   Save the returned `id`. The server auto-registers each declared brain. Declaring the
+   **same ids** the box already uses just refreshes them (idempotent) — do NOT invent new
+   ids for the same models. These are `location: "local"`, so the dispatcher spawns them
+   directly; you don't have to poll/claim them. Omit the `brains` array (or call
+   `register_agent(platform, agent_name)` bare) if you're only observing.
+   > ⚠️ Do **not** call `deregister_agent` for these local brains on exit — it cascades
+   > them out of the default/division chains that the box's config depends on. Just
+   > disconnect; brains persist (they're only removed by an explicit deregister).
 2. **Heartbeat** when starting/finishing work: `heartbeat(agent_id, status: idle|working|blocked, current_task)`.
    Agents are pruned after 10 min without a heartbeat.
 3. **Dispatch**: `create_task(title, description, from_platform, from_agent, to_platform?, to_agent?, priority?, skill?, tags?)`.
