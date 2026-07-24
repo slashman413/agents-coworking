@@ -29,6 +29,25 @@ function createIcons() {
   if (window.lucide) lucide.createIcons();
 }
 
+// Sanitized markdown render (agent output is untrusted → DOMPurify).
+function md(text) {
+  const raw = String(text ?? '');
+  try { return window.DOMPurify.sanitize(window.marked.parse(raw)); }
+  catch { return `<pre>${esc(raw)}</pre>`; }
+}
+// A markdown block with a Raw/Rendered toggle (delegated click handler below).
+let _mdSeq = 0;
+function mdViewer(text, label) {
+  const id = `md${++_mdSeq}`;
+  return `<div class="md-block" data-md="${id}">
+    ${label ? `<div style="font-size:0.72rem;color:var(--text-muted);display:flex;justify-content:space-between;align-items:center">
+      <span>${esc(label)}</span>
+      <button class="btn md-toggle" data-md-target="${id}" style="font-size:0.68rem;padding:2px 6px">Raw</button></div>` : ''}
+    <div class="md-body" data-md-body="${id}" style="font-size:0.87rem; line-height:1.5">${md(text)}</div>
+    <pre class="md-raw" data-md-raw="${id}" hidden style="white-space:pre-wrap; font-size:0.83rem; background:var(--bg-tertiary); padding:10px; border-radius:8px; margin:4px 0">${esc(text)}</pre>
+  </div>`;
+}
+
 class App {
   constructor() {
     this.currentView = '';
@@ -43,6 +62,19 @@ class App {
 
     this.initTheme();
     this.init();
+    // Delegated Raw/Rendered toggle for markdown blocks.
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.md-toggle');
+      if (!btn) return;
+      const id = btn.dataset.mdTarget;
+      const body = document.querySelector(`[data-md-body="${id}"]`);
+      const raw = document.querySelector(`[data-md-raw="${id}"]`);
+      if (!body || !raw) return;
+      const showRaw = body.style.display !== 'none';
+      body.style.display = showRaw ? 'none' : '';
+      raw.hidden = !showRaw;
+      btn.textContent = showRaw ? 'Rendered' : 'Raw';
+    });
   }
 
   initTheme() {
@@ -134,7 +166,7 @@ class App {
       item.classList.toggle('active', item.dataset.view === hash);
     });
     const titles = {
-      dashboard: 'Dashboard', agents: 'Active Agents', inbox: 'Task Inbox',
+      dashboard: 'Dashboard', connections: 'Connections', inbox: 'Task Inbox',
       reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
@@ -144,7 +176,7 @@ class App {
   async renderCurrentView() {
     try {
       switch (this.currentView) {
-        case 'agents': await this.renderAgents(); break;
+        case 'connections': await this.renderConnections(); break;
         case 'inbox': await this.renderInbox(); break;
         case 'reports': await this.renderReports(); break;
         case 'team': await this.renderTeam(); break;
@@ -244,34 +276,37 @@ class App {
 
   // ── Active Agents ──────────────────────────────────────────────────────
 
-  async renderAgents() {
-    const agents = await this.api.get('/agents');
-    if (!agents.length) {
-      this.contentEl.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon"><i data-lucide="bot"></i></div>
-          <h3>No agents currently active</h3>
-          <p>Agents register when they connect via MCP.</p>
-        </div>`;
-      return;
-    }
-    this.contentEl.innerHTML = `<div class="grid-3">` + agents.map(a => `
+  async renderConnections() {
+    const { clients, counters } = await this.api.get('/connections');
+    const clientCards = clients.length ? `<div class="grid-3">` + clients.map(a => `
       <div class="card agent-card">
         <div class="agent-header">
           <span class="agent-title">${esc(a.agentName)}</span>
-          ${badge(a.status, STATUS_COLORS[a.status] || '#94A3B8')}
+          ${badge(a.live ? 'live' : 'stale', a.live ? '#22C55E' : '#94A3B8')}
         </div>
-        <p style="margin:6px 0">
-          ${badge(a.platform, '#D97757')}
-          <span style="font-size:0.8rem; color:var(--text-muted); margin-left:4px">${esc((a.id || '').slice(0, 8))}</span>
-        </p>
-        ${a.currentTask ? `<p class="agent-task"><i data-lucide="pushpin" style="width:12px;height:12px;flex-shrink:0"></i> ${esc(a.currentTask)}</p>` : ''}
-        ${a.capabilities?.length ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:6px">${a.capabilities.map(c => esc(c)).join(' · ')}</p>` : ''}
+        <p style="margin:6px 0">${badge(a.platform, '#D97757')} ${badge(a.status, STATUS_COLORS[a.status] || '#94A3B8')}</p>
+        ${a.capabilities?.length ? `<p style="font-size:0.78rem; color:var(--text-muted); margin-top:6px">${a.capabilities.map(c => esc(c)).join(' · ')}</p>` : ''}
         <div class="agent-footer">
           <span><i data-lucide="heart" style="width:12px;height:12px;vertical-align:middle;margin-right:2px"></i> ${timeAgo(a.lastHeartbeat)}</span>
           <span>joined ${timeAgo(a.registeredAt)}</span>
         </div>
-      </div>`).join('') + `</div>`;
+      </div>`).join('') + `</div>`
+      : `<div class="empty-state"><div class="empty-state-icon"><i data-lucide="plug"></i></div><h3>No live MCP clients</h3><p>External clients appear here when they register + heartbeat.</p></div>`;
+
+    // Invocation counters: per client × per brain (ran / submitted)
+    const clientsSet = new Set([...Object.keys(counters.ran || {}), ...Object.keys(counters.submitted || {})]);
+    const counterRows = [...clientsSet].map(cl => {
+      const ran = counters.ran?.[cl] || {}, sub = counters.submitted?.[cl] || {};
+      const brains = [...new Set([...Object.keys(ran), ...Object.keys(sub)])];
+      return brains.map(b => `<tr><td style="padding:2px 10px 2px 0">${esc(cl)}</td><td style="padding:2px 10px 2px 0">${badge(b, '#7C3AED')}</td><td style="text-align:right;padding-right:12px">${ran[b] || 0}</td><td style="text-align:right">${sub[b] || 0}</td></tr>`).join('');
+    }).join('');
+
+    this.contentEl.innerHTML = `
+      ${clientCards}
+      <div class="card" style="margin-top:var(--space-lg)">
+        <h3 style="font-size:0.95rem; margin-bottom:8px">Brain invocations <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(this session · resets on restart)</span></h3>
+        ${counterRows ? `<table style="font-size:0.83rem"><thead><tr style="color:var(--text-muted);font-size:0.75rem"><th style="text-align:left">client</th><th style="text-align:left">brain</th><th style="text-align:right;padding-right:12px">ran</th><th style="text-align:right">submitted</th></tr></thead><tbody>${counterRows}</tbody></table>` : '<p style="color:var(--text-muted);font-size:0.85rem">No invocations yet.</p>'}
+      </div>`;
   }
 
   // ── Inbox ──────────────────────────────────────────────────────────────
@@ -286,22 +321,28 @@ class App {
     }).join(' ');
 
     const rows = tasks.length ? tasks.map(t => {
-      const role = t.context?.role || (t.tags || [])[0] || '';
+      const c = t.context || {};
+      // Which agent + brain ran it (item 5), or the requested assignment.
+      const agentLabel = c.ranAgent ? (c.ranDivision ? `${c.ranDivision} / ${c.ranAgent}` : c.ranAgent)
+        : (c.division ? `${c.division} / ${c.agent || '?'}` : (c.agent || c.role || ''));
+      const brainLabel = c.ranBrain || c.brain || '';
+      const arts = Array.isArray(t.artifacts) ? t.artifacts : [];
       return `
       <div class="card task-card" style="margin-bottom: var(--space-md)" data-task="${esc(t.id)}">
         <div class="task-card-header">
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
             ${badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
-            ${role ? badge(role, '#7C3AED') : ''}
+            ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
+            ${brainLabel ? badge(brainLabel, '#0EA5E9') : ''}
             <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
           </div>
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}</span>
         </div>
         <div class="task-detail">
-          <h4>Description</h4>
-          <pre style="background:var(--bg-tertiary); padding:10px; border-radius:8px">${esc(t.description)}</pre>
-          ${t.result ? `<div style="margin-top:12px"><h4>Result</h4>
-          <pre style="background:var(--bg-tertiary); padding:10px; border-radius:8px; max-height:400px; overflow-y:auto">${esc(t.result)}</pre></div>` : ''}
+          ${mdViewer(t.description, 'DESCRIPTION')}
+          ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT')}</div>` : ''}
+          ${arts.length ? `<div style="margin-top:10px"><h4 style="font-size:0.75rem;color:var(--text-muted)">ARTIFACTS</h4>
+            ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:2px 4px 2px 0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
           ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(t.claimedBy.slice(0, 8))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
         </div>
       </div>`;
@@ -315,9 +356,10 @@ class App {
       b.addEventListener('click', () => { this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
       card.addEventListener('click', (e) => {
-        if (e.target.closest('pre')) return;
+        if (e.target.closest('pre, .md-block, a, button')) return;   // don't toggle when interacting with content
         const d = card.querySelector('.task-detail');
         d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
+        createIcons();
       }));
   }
 
@@ -350,13 +392,14 @@ class App {
 
     this.contentEl.querySelectorAll('[data-report]').forEach(card =>
       card.addEventListener('click', async (e) => {
-        if (e.target.closest('pre')) return;
+        if (e.target.closest('pre, .md-block, a, button')) return;
         const body = card.querySelector('.report-body');
         if (body.style.display === 'none' || !body.style.display) {
           if (!body.dataset.loaded) {
             const full = await this.api.get(`/reports/${card.dataset.report}`);
-            body.innerHTML = `<pre style="white-space:pre-wrap; font-size:0.85rem; max-height:500px; overflow-y:auto; background:var(--bg-tertiary); padding:10px; border-radius:8px">${esc(full.content || full.summary || '')}</pre>`;
+            body.innerHTML = mdViewer(full.content || full.summary || '', 'REPORT');
             body.dataset.loaded = '1';
+            createIcons();
           }
           body.style.display = 'block';
         } else {
@@ -399,78 +442,89 @@ class App {
     this.contentEl.querySelector('#roster-search').addEventListener('input', (e) => render(e.target.value));
   }
 
-  // ── Agents (worker profiles + ordered brain chains) ────────────────────
+  // ── Agents: special executors + roster divisions (with brain chains) ───────
 
   async renderTeam() {
-    const [agents, brains] = await Promise.all([this.api.get('/agents-config'), this.api.get('/brains')]);
-    const optionList = Object.keys(brains).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    const [special, brains, chains, divisions] = await Promise.all([
+      this.api.get('/agents-config'), this.api.get('/brains'), this.api.get('/chains'), this.api.get('/roster-divisions')
+    ]);
+    const opts = Object.keys(brains).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+    const chip = (b, i, ctx) => {
+      const known = !!brains[b];
+      return `<span class="chip" data-ctx="${ctx}" data-brain="${esc(b)}" style="display:inline-flex;align-items:center;gap:5px;background:${known ? '#7C3AED18' : '#EF444418'};border:1px solid ${known ? '#7C3AED40' : '#EF444440'};color:${known ? '#7C3AED' : '#EF4444'};padding:2px 7px;border-radius:8px;font-size:0.77rem;margin:2px">
+        <b style="opacity:.6">${i + 1}</b> ${esc(b)}${known ? '' : ' ⚠'}
+        <a data-act="up" style="cursor:pointer">▲</a><a data-act="down" style="cursor:pointer">▼</a><a data-act="rm" style="cursor:pointer">✕</a></span>`;
+    };
+    const chainRow = (arr, ctx) => `<div style="margin:4px 0">${(arr || []).map((b, i) => chip(b, i, ctx)).join('') || '<span style="color:var(--text-muted);font-size:0.8rem">none</span>'}</div>
+      <select data-add="${ctx}" style="padding:4px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.78rem"><option value="">+ add brain…</option>${opts}</select>`;
 
-    // Every chain mutation persists immediately, then re-renders from server.
-    const saveChain = async (name, agent) => { await this.api.put(`/agents-config/${encodeURIComponent(name)}`, agent); await this.renderTeam(); };
+    const specialCards = Object.entries(special).map(([n, a]) => `
+      <div class="card" style="margin-bottom:var(--space-md)">
+        <div style="display:flex;justify-content:space-between;align-items:center"><strong>${esc(n)}</strong>${badge('special', '#0EA5E9')}</div>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin:4px 0">${esc(a.description || '')}</p>
+        ${chainRow(a.brains, 'agent:' + n)}
+      </div>`).join('');
 
-    const card = (name, a) => {
-      const chips = (a.brains || []).map((b, i) => {
-        const known = !!brains[b];
-        return `<span class="chip" data-agent="${esc(name)}" data-brain="${esc(b)}" style="display:inline-flex;align-items:center;gap:5px;background:${known ? '#7C3AED18' : '#EF444418'};border:1px solid ${known ? '#7C3AED40' : '#EF444440'};color:${known ? '#7C3AED' : '#EF4444'};padding:2px 7px;border-radius:8px;font-size:0.78rem;margin:2px">
-          <b style="opacity:.6">${i + 1}</b> ${esc(b)}${known ? '' : ' ⚠dead'}
-          <a data-act="up" style="cursor:pointer">▲</a><a data-act="down" style="cursor:pointer">▼</a><a data-act="rm" style="cursor:pointer">✕</a>
-        </span>`;
-      }).join('') || '<span style="color:var(--text-muted);font-size:0.8rem">no brains — add one →</span>';
+    const divCards = Object.entries(divisions).sort().map(([d, info]) => {
+      const override = chains.divisionChains?.[d];
       return `<div class="card" style="margin-bottom:var(--space-md)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <strong>${esc(name)}</strong>
-          <button class="btn" data-act="del-agent" data-agent="${esc(name)}" style="font-size:0.75rem">Delete</button>
+          <strong>${esc(info.label || d)}</strong>
+          <span style="font-size:0.75rem;color:var(--text-muted)">${info.agents.length} agents${override ? '' : ' · uses default chain'}</span>
         </div>
-        <input data-desc="${esc(name)}" value="${esc(a.description || '')}" placeholder="description"
-          style="width:100%;margin:6px 0;padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font:inherit;font-size:0.83rem">
-        <div style="margin:6px 0">${chips}</div>
-        <select data-addbrain="${esc(name)}" style="padding:5px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem"><option value="">+ add brain…</option>${optionList}</select>
-        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px">Runs top → bottom; a failed task hands over to the next brain automatically.</div>
+        ${override ? chainRow(override, 'div:' + d) + `<a data-reset="${esc(d)}" style="cursor:pointer;font-size:0.72rem;color:var(--text-muted)">↺ reset to default</a>`
+          : `<div style="margin:4px 0;font-size:0.8rem;color:var(--text-muted)">${(chains.defaultChain || []).join(' → ') || '(no default)'}</div>
+             <select data-add="div:${esc(d)}" style="padding:4px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.78rem"><option value="">+ override with…</option>${opts}</select>`}
       </div>`;
-    };
+    }).join('');
 
     this.contentEl.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-lg);gap:8px;flex-wrap:wrap">
-        <p style="font-size:0.85rem;color:var(--text-secondary)">Each agent runs its brains in order; a failed task auto-hands-over to the next and files a report. Changes save instantly.</p>
-        <div style="display:flex;gap:6px">
-          <input id="new-agent-name" placeholder="new agent name" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem">
-          <button class="btn btn-primary" id="add-agent" style="font-size:0.8rem">+ Agent</button>
-        </div>
-      </div>
-      ${Object.entries(agents).map(([n, a]) => card(n, a)).join('') || '<div class="empty-state"><p>No agents configured.</p></div>'}`;
+      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:var(--space-md)">The orchestrator routes each task to a specialist in one of these divisions; the specialist runs on its division's chain (or the global default). Special executors run directly. Changes save instantly.</p>
+      <h3 style="font-size:0.9rem;margin:var(--space-md) 0 6px">Special executors</h3>${specialCards}
+      <h3 style="font-size:0.9rem;margin:var(--space-lg) 0 6px">Divisions <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(brain chain override per division)</span></h3>${divCards}`;
+
+    const save = async (ctx, arr) => {
+      if (ctx.startsWith('agent:')) { const n = ctx.slice(6); await this.api.put(`/agents-config/${encodeURIComponent(n)}`, { description: special[n].description, brains: arr }); }
+      else { const dv = ctx.slice(4); await this.api.put(`/chains/division/${encodeURIComponent(dv)}`, { brains: arr }); }
+      await this.renderTeam();
+    };
+    const chainOf = (ctx) => ctx.startsWith('agent:') ? (special[ctx.slice(6)].brains || []).slice() : (chains.divisionChains?.[ctx.slice(4)] || []).slice();
 
     this.contentEl.querySelectorAll('.chip a').forEach(el => el.addEventListener('click', (e) => {
-      const chip = e.target.closest('.chip'); const name = chip.dataset.agent; const brain = chip.dataset.brain;
-      const a = agents[name]; const arr = a.brains; const i = arr.indexOf(brain); const act = e.target.dataset.act;
+      const c = e.target.closest('.chip'); const ctx = c.dataset.ctx; const brain = c.dataset.brain; const act = e.target.dataset.act;
+      const arr = chainOf(ctx); const i = arr.indexOf(brain);
       if (act === 'rm') arr.splice(i, 1);
       else if (act === 'up' && i > 0) { arr.splice(i, 1); arr.splice(i - 1, 0, brain); }
       else if (act === 'down' && i < arr.length - 1) { arr.splice(i, 1); arr.splice(i + 1, 0, brain); }
       else return;
-      saveChain(name, a);
+      save(ctx, arr);
     }));
-    this.contentEl.querySelectorAll('[data-addbrain]').forEach(sel => sel.addEventListener('change', (e) => {
-      const name = e.target.dataset.addbrain; const b = e.target.value; if (!b) return;
-      const a = agents[name]; if (!a.brains.includes(b)) a.brains.push(b);
-      saveChain(name, a);
+    this.contentEl.querySelectorAll('[data-add]').forEach(sel => sel.addEventListener('change', (e) => {
+      const ctx = e.target.dataset.add; const b = e.target.value; if (!b) return;
+      const arr = chainOf(ctx); if (!arr.includes(b)) arr.push(b);
+      save(ctx, arr);
     }));
-    this.contentEl.querySelectorAll('[data-desc]').forEach(inp => inp.addEventListener('change', (e) => {
-      const name = e.target.dataset.desc; agents[name].description = e.target.value;
-      this.api.put(`/agents-config/${encodeURIComponent(name)}`, agents[name]).then(() => this.toast('saved', name));
-    }));
-    this.contentEl.querySelectorAll('[data-act="del-agent"]').forEach(b => b.addEventListener('click', async () => {
-      if (!confirm(`Delete agent "${b.dataset.agent}"?`)) return;
-      await this.api.del(`/agents-config/${encodeURIComponent(b.dataset.agent)}`); await this.renderTeam();
-    }));
-    this.contentEl.querySelector('#add-agent')?.addEventListener('click', async () => {
-      const name = this.contentEl.querySelector('#new-agent-name').value.trim(); if (!name) return;
-      await this.api.put(`/agents-config/${encodeURIComponent(name)}`, { description: name, brains: [] }); await this.renderTeam();
-    });
+    this.contentEl.querySelectorAll('[data-reset]').forEach(a => a.addEventListener('click', () => save('div:' + a.dataset.reset, [])));
   }
 
   // ── Brains (model × platform × location registry) ──────────────────────
 
   async renderBrains() {
-    const brains = await this.api.get('/brains');
+    const [brains, chains] = await Promise.all([this.api.get('/brains'), this.api.get('/chains')]);
+    // Default fallback chain — drag to reorder; saves on drop.
+    const chainChips = (chains.defaultChain || []).map(b => {
+      const known = !!brains[b];
+      return `<span class="dchip" draggable="true" data-brain="${esc(b)}" style="display:inline-flex;align-items:center;gap:6px;cursor:grab;background:${known ? '#7C3AED18' : '#EF444418'};border:1px solid ${known ? '#7C3AED40' : '#EF444440'};color:${known ? '#7C3AED' : '#EF4444'};padding:4px 9px;border-radius:8px;font-size:0.8rem;margin:3px">
+        <i data-lucide="grip-vertical" style="width:12px;height:12px;opacity:.5"></i>${esc(b)}${known ? '' : ' ⚠'}
+        <a data-rm="${esc(b)}" style="cursor:pointer">✕</a></span>`;
+    }).join('') || '<span style="color:var(--text-muted);font-size:0.8rem">empty — add a brain below</span>';
+    const notInChain = Object.keys(brains).filter(b => !(chains.defaultChain || []).includes(b));
+    const defaultChainCard = `
+      <div class="card" style="margin-bottom:var(--space-lg)">
+        <div style="font-size:0.9rem;font-weight:600">Default fallback chain <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">— drag to reorder; roster agents use this unless their division overrides it</span></div>
+        <div id="dchain" style="margin:8px 0;min-height:34px">${chainChips}</div>
+        <select id="dchain-add" style="padding:5px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem"><option value="">+ add to chain…</option>${notInChain.map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('')}</select>
+      </div>`;
     const row = (id, b) => `
       <div class="card" style="margin-bottom:var(--space-md)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
@@ -496,7 +550,41 @@ class App {
         </div>
         <button class="btn btn-primary" id="nb-save" style="margin-top:8px;font-size:0.8rem">Save brain</button>
       </div>
+      ${defaultChainCard}
       ${Object.entries(brains).map(([id, b]) => row(id, b)).join('') || '<div class="empty-state"><p>No brains registered.</p></div>'}`;
+
+    if (window.lucide) window.lucide.createIcons();
+
+    // ── Default chain: drag-to-reorder + add/remove, persisted on change ──────
+    const saveDefault = async (arr) => {
+      try { await this.api.put('/chains/default', { brains: arr }); this.renderBrains(); }
+      catch (e) { this.toast('error', e.message); }
+    };
+    const dchain = this.contentEl.querySelector('#dchain');
+    if (dchain) {
+      let dragged = null;
+      dchain.querySelectorAll('.dchip').forEach(c => {
+        c.addEventListener('dragstart', () => { dragged = c; c.style.opacity = '.4'; });
+        c.addEventListener('dragend', () => { c.style.opacity = ''; dragged = null; });
+        c.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          if (!dragged || dragged === c) return;
+          const chips = [...dchain.querySelectorAll('.dchip')];
+          if (chips.indexOf(dragged) < chips.indexOf(c)) c.after(dragged); else c.before(dragged);
+        });
+      });
+      dchain.addEventListener('drop', (e) => {
+        e.preventDefault();
+        saveDefault([...dchain.querySelectorAll('.dchip')].map(c => c.dataset.brain));
+      });
+      dchain.querySelectorAll('[data-rm]').forEach(a => a.addEventListener('click', () => {
+        saveDefault([...dchain.querySelectorAll('.dchip')].filter(c => c.dataset.brain !== a.dataset.rm).map(c => c.dataset.brain));
+      }));
+    }
+    this.contentEl.querySelector('#dchain-add')?.addEventListener('change', (e) => {
+      const b = e.target.value; if (!b) return;
+      saveDefault([...(chains.defaultChain || []), b]);
+    });
 
     this.contentEl.querySelector('#nb-save').addEventListener('click', async () => {
       const g = id => this.contentEl.querySelector(`#nb-${id}`).value.trim();
