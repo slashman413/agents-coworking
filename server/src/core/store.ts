@@ -147,7 +147,12 @@ export class Store {
   public claimTask(params: { taskId: string; agentId: string }): Task | null {
     const task = this.getTask(params.taskId);
     if (!task) return null;
-    
+    // Atomic compare-and-set: only a pending task can be claimed. The server is
+    // single-process, so claimTask runs to completion without interleaving —
+    // this makes concurrent claims (many remote clients on one brain) safe:
+    // the first wins, the rest get null. Re-claim by the same agent is allowed.
+    if (task.status !== 'pending' && task.claimedBy !== params.agentId) return null;
+
     task.status = 'in-progress';
     task.claimedAt = new Date().toISOString();
     task.claimedBy = params.agentId;

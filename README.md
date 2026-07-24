@@ -191,7 +191,29 @@ brain the orchestrator can target via a task's `context.brain`, e.g.:
 A `role` stays the *semantic* category (drives the prompt); a `brain` is *where/
 what* it runs. Set `context.brain` to pin a task. **Local** brains the dispatcher
 spawns; **remote** brains it leaves `pending` for that machine's client to claim
-(poll `list_inbox`, match `context.brain` to your own id, `claim_task`). Brains
+(poll `list_inbox`, match `context.brain` to your own id, `claim_task`).
+
+### Wiring a remote brain machine
+
+`deploy/remote-brain-client.mjs` is a zero-dependency (Node 18+) Cowork **MCP**
+client that does exactly that loop. On the remote machine:
+
+```bash
+git clone https://github.com/slashman413/agents-coworking   # for the script
+mkdir -p ~/.config/cowork-remote-brain
+cp agents-coworking/deploy/remote-brain-client.env.example ~/.config/cowork-remote-brain/fable.env
+# edit fable.env: COWORK_URL, BRAIN_ID, EXEC, MODEL, COWORK_CLIENT_JS
+cp agents-coworking/deploy/cowork-remote-brain@.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-brain@fable
+```
+
+It connects to `COWORK_URL/mcp`, `register_agent`s, then polls and claims only
+tasks whose `context.brain` == its `BRAIN_ID`, runs the local `EXEC`/`MODEL`, and
+`complete_task`s with a filed report — appearing in Active Agents like any other
+worker. **Flexible**: the same script serves any brain by changing env only.
+**Scalable**: add machines/brains by adding `<name>.env` files; claims are atomic
+(single-process compare-and-set) so even multiple clients on the *same* brain id
+never double-run a task — first claim wins. Brains
 and roles both support a `fallback` for handover. The orchestrator is given the
 brain list so it can route each subtask to the right model on the right instance.
 
