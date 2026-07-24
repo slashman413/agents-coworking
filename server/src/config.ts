@@ -27,7 +27,7 @@ function resolvePath(filepath: string): string {
 
 const defaultConfig: Config = {
   server: {
-    port: 4200,
+    port: 6868,
     host: '127.0.0.1',
     name: 'cowork-mcp',
     version: '1.0.0',

@@ -41,7 +41,7 @@ Edit `agents-coworking/config.json` to match your environment:
 ```json
 {
   "server": {
-    "port": 4200,          // ← Change the port here
+    "port": 6868,          // ← Change the port here
     "host": "0.0.0.0",     // ← Bind address (0.0.0.0 = all interfaces)
     "name": "cowork-mcp",
     "version": "1.0.0",
@@ -65,7 +65,7 @@ Edit `agents-coworking/config.json` to match your environment:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `server.port` | `4200` | HTTP port for MCP endpoint + Web UI |
+| `server.port` | `6868` | HTTP port for MCP endpoint + Web UI |
 | `server.host` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
 | `server.apiKey` | `null` | API key for authentication (null = no auth) |
 | `paths.agencyAgents` | `../agency-agents` | Path to the agency-agents repo |
@@ -88,16 +88,16 @@ npm start
 You should see:
 
 ```
-🤝 Cowork MCP Server running at http://0.0.0.0:4200
-   MCP endpoint: http://0.0.0.0:4200/mcp
-   Web Dashboard: http://0.0.0.0:4200/
-   REST API: http://0.0.0.0:4200/api/
+🤝 Cowork MCP Server running at http://0.0.0.0:6868
+   MCP endpoint: http://0.0.0.0:6868/mcp
+   Web Dashboard: http://0.0.0.0:6868/
+   REST API: http://0.0.0.0:6868/api/
    Roster loaded: 254 agents across 16 divisions
 ```
 
 ### 4. Open the Dashboard
 
-Open **http://localhost:4200** in your browser.
+Open **http://localhost:6868** in your browser.
 
 ---
 
@@ -111,7 +111,7 @@ Add to your MCP configuration (`~/.claude.json` or project-level):
 {
   "mcpServers": {
     "cowork": {
-      "url": "http://localhost:4200/mcp",
+      "url": "http://localhost:6868/mcp",
       "transport": "streamable-http"
     }
   }
@@ -131,7 +131,7 @@ Add to your AGY MCP settings:
 {
   "mcpServers": {
     "cowork": {
-      "url": "http://localhost:4200/mcp"
+      "url": "http://localhost:6868/mcp"
     }
   }
 }
@@ -144,7 +144,7 @@ Configure the MCP endpoint in Hermes:
 ```json
 {
   "mcp_endpoints": {
-    "cowork": "http://localhost:4200/mcp"
+    "cowork": "http://localhost:6868/mcp"
   }
 }
 ```
@@ -152,7 +152,7 @@ Configure the MCP endpoint in Hermes:
 ### Any MCP-Compatible Client
 
 The server speaks standard MCP over Streamable HTTP. Any client that supports
-MCP can connect to `http://localhost:4200/mcp`.
+MCP can connect to `http://localhost:6868/mcp`.
 
 ---
 
@@ -265,7 +265,7 @@ systemctl --user enable --now cowork-mcp
 ```
 
 With `server.host: "0.0.0.0"` the dashboard is reachable from other machines at
-`http://<host-ip>:4200/` (LAN or Tailscale IP — `0.0.0.0` itself is a bind
+`http://<host-ip>:6868/` (LAN or Tailscale IP — `0.0.0.0` itself is a bind
 address, not a URL). Set `server.apiKey` (or `COWORK_API_KEY`) if the host is
 reachable beyond trusted networks.
 
@@ -357,7 +357,7 @@ agents-coworking/
 Test the MCP endpoint with the official inspector:
 
 ```bash
-npx @modelcontextprotocol/inspector http://localhost:4200/mcp
+npx @modelcontextprotocol/inspector http://localhost:6868/mcp
 ```
 
 This opens a web UI at http://localhost:6274 where you can browse and test all
@@ -367,26 +367,26 @@ This opens a web UI at http://localhost:6274 where you can browse and test all
 
 ```bash
 # Check server status
-curl http://localhost:4200/api/status | jq
+curl http://localhost:6868/api/status | jq
 
 # List active agents
-curl http://localhost:4200/api/agents | jq
+curl http://localhost:6868/api/agents | jq
 
 # List pending inbox tasks
-curl "http://localhost:4200/api/inbox?status=pending" | jq
+curl "http://localhost:6868/api/inbox?status=pending" | jq
 
 # Browse engineering agents in roster
-curl "http://localhost:4200/api/roster?division=engineering" | jq
+curl "http://localhost:6868/api/roster?division=engineering" | jq
 
 # Watch real-time events
-curl -N http://localhost:4200/api/events
+curl -N http://localhost:6868/api/events
 ```
 
 ### Test MCP Tool Calls
 
 ```bash
 # Register a test agent
-curl -X POST http://localhost:4200/mcp \
+curl -X POST http://localhost:6868/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -403,7 +403,7 @@ curl -X POST http://localhost:4200/mcp \
   }'
 
 # Get dashboard data
-curl -X POST http://localhost:4200/mcp \
+curl -X POST http://localhost:6868/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -425,7 +425,7 @@ curl -X POST http://localhost:4200/mcp \
 ```json
 {
   "server": {
-    "port": 4200,
+    "port": 6868,
     "host": "0.0.0.0",
     "name": "cowork-mcp",
     "version": "1.0.0",

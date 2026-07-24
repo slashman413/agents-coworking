@@ -17,7 +17,7 @@
 //   Single (simplest):
 //     BRAIN_ID=remote-aicodegen-cc-fable  EXEC=claude  MODEL=claude-fable-5
 //
-//   COWORK_URL       cowork server base, e.g. http://100.80.243.33:4200  (required)
+//   COWORK_URL       cowork server base, e.g. http://100.80.243.33:6868  (required)
 //   COWORK_API_KEY   bearer token if the server sets server.apiKey       (optional)
 //   POLL_MS          inbox poll interval                                 (default 5000)
 //   MAX_CONCURRENT   tasks in parallel across all brains                 (default 1)

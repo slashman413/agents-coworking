@@ -1,5 +1,5 @@
 [Unit]
-Description=Multi-Agent Cowork MCP Server (dashboard + task inbox on :4200)
+Description=Multi-Agent Cowork MCP Server (dashboard + task inbox on :6868)
 After=network.target
 
 [Service]
