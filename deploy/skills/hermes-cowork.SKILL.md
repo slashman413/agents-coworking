@@ -31,9 +31,9 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 ## Prerequisites
 
 - Cowork MCP server: systemd service `cowork-mcp.service` (auto-starts at boot)
-  - Config: `/home/wayne/workspace/github/slashman413/cowork/config.json`
+  - Config: `~/.cowork/config.json` (real per-server; repo `config.json` is a template)
   - Port: 6868, no API key required
-- `agency-agents` repo cloned at `../agency-agents` relative to cowork root
+- `agency-agents` — a git submodule at `./agency-agents` (init: `git submodule update --init`)
 - Hermes MCP endpoint: `mcp_endpoints: { cowork: "http://localhost:6868/mcp" }`
 - Hermes model CLIs: `hermes` (qwen35b/qwen27b/deepseek), optional `claude`, `agy`, `codex`, `ollama`
 
@@ -42,7 +42,7 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 - `cowork/` — repo root at `/home/wayne/workspace/github/slashman413/cowork/`
 - `inbox/` — Task queue (JSON files, auto-managed)
 - `reports/` — Generated reports (markdown with YAML frontmatter)
-- `skills/` — Shared cross-platform skills (code-review.md, drill-me.md, research-report.md, task-breakdown.md, decision-record.md)
+- `artifacts/` — Per-task output files (audio/video/md), downloadable from the Inbox
 - `.status/` — Runtime state (auto-managed)
 - `deploy/remote-brain-client.mjs` — Remote brain registration script (zero-config)
 - `deploy/presets/hermes.json` — Hermes preset: qwen35b, qwen27b, deepseek

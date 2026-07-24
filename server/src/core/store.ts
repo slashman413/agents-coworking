@@ -25,7 +25,6 @@ export class Store {
       this.config.paths.inbox,
       this.config.paths.reports,
       this.config.paths.status,
-      this.config.paths.skills,
       this.config.paths.decisions
     ];
 

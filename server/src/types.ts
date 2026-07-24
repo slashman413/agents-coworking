@@ -117,7 +117,6 @@ export interface Config {
     agencyAgents: string;
     inbox: string;
     reports: string;
-    skills: string;
     status: string;
     decisions: string;
   };

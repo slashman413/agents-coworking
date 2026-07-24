@@ -48,7 +48,6 @@ const defaultConfig: Config = {
     agencyAgents: './agency-agents',
     inbox: './inbox',
     reports: './reports',
-    skills: './skills',
     status: './.status',
     decisions: './decisions'
   },

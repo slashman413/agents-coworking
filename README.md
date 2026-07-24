@@ -416,7 +416,6 @@ cowork/
 ├── inbox/                   # Task queue (JSON files, auto-managed)
 ├── reports/                 # Generated reports (markdown)
 ├── artifacts/               # Per-task output files (audio/video/md), downloadable
-├── skills/                  # Cross-platform shared task skills
 ├── decisions/               # Decision log
 └── .status/                 # Runtime state (auto-managed)
 ```
