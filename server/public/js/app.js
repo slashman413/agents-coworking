@@ -153,6 +153,9 @@ class App {
         case 'config': await this.renderConfig(); break;
         default: await this.renderDashboard(); break;
       }
+      // A successful data fetch proves the server is reachable — mark the badge
+      // Live even if the SSE stream is slow/blocked for any reason.
+      this.updateConnectionStatus('connected');
     } catch (error) {
       this.contentEl.innerHTML = `<div class="empty-state"><p>Error loading view: ${esc(error.message)}</p></div>`;
     }
