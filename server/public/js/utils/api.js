@@ -41,6 +41,17 @@ class APIClient {
       body: JSON.stringify(data),
     });
   }
+
+  put(endpoint, data) {
+    return this.request(endpoint, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  del(endpoint) {
+    return this.request(endpoint, { method: 'DELETE' });
+  }
 }
 
 window.api = new APIClient();

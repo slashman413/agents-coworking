@@ -132,7 +132,7 @@ class App {
     });
     const titles = {
       dashboard: 'Dashboard', agents: 'Active Agents', inbox: 'Task Inbox',
-      reports: 'Reports', roster: 'Agent Roster', config: 'Configuration'
+      reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
     this.renderCurrentView();
@@ -144,6 +144,8 @@ class App {
         case 'agents': await this.renderAgents(); break;
         case 'inbox': await this.renderInbox(); break;
         case 'reports': await this.renderReports(); break;
+        case 'team': await this.renderTeam(); break;
+        case 'brains': await this.renderBrains(); break;
         case 'roster': await this.renderRoster(); break;
         case 'config': await this.renderConfig(); break;
         default: await this.renderDashboard(); break;
@@ -389,6 +391,124 @@ class App {
     };
     render('');
     this.contentEl.querySelector('#roster-search').addEventListener('input', (e) => render(e.target.value));
+  }
+
+  // ── Agents (worker profiles + ordered brain chains) ────────────────────
+
+  async renderTeam() {
+    const [agents, brains] = await Promise.all([this.api.get('/agents-config'), this.api.get('/brains')]);
+    const optionList = Object.keys(brains).map(b => `<option value="${esc(b)}">${esc(b)}</option>`).join('');
+
+    // Every chain mutation persists immediately, then re-renders from server.
+    const saveChain = async (name, agent) => { await this.api.put(`/agents-config/${encodeURIComponent(name)}`, agent); await this.renderTeam(); };
+
+    const card = (name, a) => {
+      const chips = (a.brains || []).map((b, i) => {
+        const known = !!brains[b];
+        return `<span class="chip" data-agent="${esc(name)}" data-brain="${esc(b)}" style="display:inline-flex;align-items:center;gap:5px;background:${known ? '#7C3AED18' : '#EF444418'};border:1px solid ${known ? '#7C3AED40' : '#EF444440'};color:${known ? '#7C3AED' : '#EF4444'};padding:2px 7px;border-radius:8px;font-size:0.78rem;margin:2px">
+          <b style="opacity:.6">${i + 1}</b> ${esc(b)}${known ? '' : ' ⚠dead'}
+          <a data-act="up" style="cursor:pointer">▲</a><a data-act="down" style="cursor:pointer">▼</a><a data-act="rm" style="cursor:pointer">✕</a>
+        </span>`;
+      }).join('') || '<span style="color:var(--text-muted);font-size:0.8rem">no brains — add one →</span>';
+      return `<div class="card" style="margin-bottom:var(--space-md)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <strong>${esc(name)}</strong>
+          <button class="btn" data-act="del-agent" data-agent="${esc(name)}" style="font-size:0.75rem">Delete</button>
+        </div>
+        <input data-desc="${esc(name)}" value="${esc(a.description || '')}" placeholder="description"
+          style="width:100%;margin:6px 0;padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font:inherit;font-size:0.83rem">
+        <div style="margin:6px 0">${chips}</div>
+        <select data-addbrain="${esc(name)}" style="padding:5px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem"><option value="">+ add brain…</option>${optionList}</select>
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px">Runs top → bottom; a failed task hands over to the next brain automatically.</div>
+      </div>`;
+    };
+
+    this.contentEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-lg);gap:8px;flex-wrap:wrap">
+        <p style="font-size:0.85rem;color:var(--text-secondary)">Each agent runs its brains in order; a failed task auto-hands-over to the next and files a report. Changes save instantly.</p>
+        <div style="display:flex;gap:6px">
+          <input id="new-agent-name" placeholder="new agent name" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem">
+          <button class="btn btn-primary" id="add-agent" style="font-size:0.8rem">+ Agent</button>
+        </div>
+      </div>
+      ${Object.entries(agents).map(([n, a]) => card(n, a)).join('') || '<div class="empty-state"><p>No agents configured.</p></div>'}`;
+
+    this.contentEl.querySelectorAll('.chip a').forEach(el => el.addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip'); const name = chip.dataset.agent; const brain = chip.dataset.brain;
+      const a = agents[name]; const arr = a.brains; const i = arr.indexOf(brain); const act = e.target.dataset.act;
+      if (act === 'rm') arr.splice(i, 1);
+      else if (act === 'up' && i > 0) { arr.splice(i, 1); arr.splice(i - 1, 0, brain); }
+      else if (act === 'down' && i < arr.length - 1) { arr.splice(i, 1); arr.splice(i + 1, 0, brain); }
+      else return;
+      saveChain(name, a);
+    }));
+    this.contentEl.querySelectorAll('[data-addbrain]').forEach(sel => sel.addEventListener('change', (e) => {
+      const name = e.target.dataset.addbrain; const b = e.target.value; if (!b) return;
+      const a = agents[name]; if (!a.brains.includes(b)) a.brains.push(b);
+      saveChain(name, a);
+    }));
+    this.contentEl.querySelectorAll('[data-desc]').forEach(inp => inp.addEventListener('change', (e) => {
+      const name = e.target.dataset.desc; agents[name].description = e.target.value;
+      this.api.put(`/agents-config/${encodeURIComponent(name)}`, agents[name]).then(() => this.toast('saved', name));
+    }));
+    this.contentEl.querySelectorAll('[data-act="del-agent"]').forEach(b => b.addEventListener('click', async () => {
+      if (!confirm(`Delete agent "${b.dataset.agent}"?`)) return;
+      await this.api.del(`/agents-config/${encodeURIComponent(b.dataset.agent)}`); await this.renderTeam();
+    }));
+    this.contentEl.querySelector('#add-agent')?.addEventListener('click', async () => {
+      const name = this.contentEl.querySelector('#new-agent-name').value.trim(); if (!name) return;
+      await this.api.put(`/agents-config/${encodeURIComponent(name)}`, { description: name, brains: [] }); await this.renderTeam();
+    });
+  }
+
+  // ── Brains (model × platform × location registry) ──────────────────────
+
+  async renderBrains() {
+    const brains = await this.api.get('/brains');
+    const row = (id, b) => `
+      <div class="card" style="margin-bottom:var(--space-md)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <strong>${esc(id)}</strong>
+          ${badge(b.location, b.location === 'remote' ? '#EAB308' : '#22C55E')}
+          <button class="btn" data-act="del-brain" data-id="${esc(id)}" style="font-size:0.75rem;margin-left:auto">Deregister</button>
+        </div>
+        <p style="font-size:0.82rem;color:var(--text-secondary);margin:4px 0">${esc(b.description || '')}</p>
+        <div style="font-size:0.78rem;color:var(--text-muted)">${esc(b.exec || '')}${b.model ? ' · ' + esc(b.model) : ''}${b.host ? ' · host ' + esc(b.host) : ''}</div>
+      </div>`;
+    const fld = (id, ph) => `<input id="nb-${id}" placeholder="${ph}" style="padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem">`;
+    this.contentEl.innerHTML = `
+      <div class="card" style="margin-bottom:var(--space-lg)">
+        <div style="font-size:0.85rem;font-weight:600;margin-bottom:6px">Register / update a brain</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px">
+          ${fld('id', 'id (e.g. remote-laptop-cc-sonnet)')}
+          <select id="nb-location" style="padding:6px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem"><option value="local">local</option><option value="remote">remote</option></select>
+          <select id="nb-exec" style="padding:6px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem"><option value="claude">claude</option><option value="hermes">hermes</option><option value="agy">agy</option><option value="script">script</option></select>
+          ${fld('model', 'model id')}
+          ${fld('host', 'host (remote only)')}
+          ${fld('desc', 'description')}
+        </div>
+        <button class="btn btn-primary" id="nb-save" style="margin-top:8px;font-size:0.8rem">Save brain</button>
+      </div>
+      ${Object.entries(brains).map(([id, b]) => row(id, b)).join('') || '<div class="empty-state"><p>No brains registered.</p></div>'}`;
+
+    this.contentEl.querySelector('#nb-save').addEventListener('click', async () => {
+      const g = id => this.contentEl.querySelector(`#nb-${id}`).value.trim();
+      const id = g('id'); if (!id) { this.toast('error', 'brain id required'); return; }
+      try {
+        await this.api.put(`/brains/${encodeURIComponent(id)}`, {
+          description: g('desc') || id, location: this.contentEl.querySelector('#nb-location').value,
+          exec: this.contentEl.querySelector('#nb-exec').value, model: g('model'), host: g('host') || undefined
+        });
+        this.toast('brain saved', id); this.renderBrains();
+      } catch (e) { this.toast('error', e.message); }
+    });
+    this.contentEl.querySelectorAll('[data-act="del-brain"]').forEach(b => b.addEventListener('click', async () => {
+      const id = b.dataset.id;
+      if (!confirm(`Deregister brain "${id}"? It will be removed from every agent's chain.`)) return;
+      const r = await this.api.del(`/brains/${encodeURIComponent(id)}`);
+      this.toast('brain removed', `${id} (scrubbed from ${r.agents_scrubbed} agent chain(s))`);
+      this.renderBrains();
+    }));
   }
 
   // ── Config ─────────────────────────────────────────────────────────────
