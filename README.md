@@ -30,13 +30,13 @@ pane of glass.
 ### 1. Install Dependencies
 
 ```bash
-cd agents-coworking/server
+cd cowork/server
 npm install
 ```
 
 ### 2. Configure Settings
 
-Edit `agents-coworking/config.json` to match your environment:
+Edit `cowork/config.json` to match your environment:
 
 ```json
 {
@@ -58,7 +58,7 @@ Edit `agents-coworking/config.json` to match your environment:
 }
 ```
 
-> **All paths are relative to `agents-coworking/`** (the parent of `server/`).
+> **All paths are relative to `cowork/`** (the parent of `server/`).
 > Use `~` for home directory paths (e.g., `~/.claude/agents`).
 
 #### Key Settings
@@ -77,7 +77,7 @@ Edit `agents-coworking/config.json` to match your environment:
 
 ```bash
 # Development mode (with hot-reload)
-cd agents-coworking/server
+cd cowork/server
 npm run dev
 
 # Production mode
@@ -352,7 +352,7 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 ## Directory Structure
 
 ```
-agents-coworking/
+cowork/
 ├── config.json              # Central settings file
 ├── README.md                # This file
 ├── PROTOCOL.md              # Protocol specification
