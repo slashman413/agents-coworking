@@ -44,7 +44,9 @@ echo "[video] name : $NAME  · duration ${DURATION}s · LTX (GB10-safe, 35B stay
 # 3) Render — Flux still -> LTX img2vid -> stitched 1080x1920 short. Host script,
 #    drives the running ComfyUI container over REST.
 cd "$COMFY_DIR" || { echo "VIDEO PIPELINE ABORTED: $COMFY_DIR missing"; exit 1; }
-if ! ./shorts.py --prompt "$SCENE" --name "$NAME" --duration "$DURATION"; then
+# Invoke via python3 (shorts.py is not marked +x) and merge stderr so any render
+# error is captured in the task result rather than swallowed.
+if ! python3 shorts.py --prompt "$SCENE" --name "$NAME" --duration "$DURATION" 2>&1; then
   echo "VIDEO PIPELINE FAILED during LTX render (see shorts.py output above)."
   exit 1
 fi
