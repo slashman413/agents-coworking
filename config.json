@@ -188,27 +188,6 @@
         "command": [
           "/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"
         ]
-      },
-      "remote-aicodegen-cc-fable": {
-        "description": "Remote MCP client on host 'aicodegen' running Claude using Fable",
-        "location": "remote",
-        "host": "aicodegen",
-        "exec": "claude",
-        "model": "claude-fable-5"
-      },
-      "remote-aicodegen-cc-opus": {
-        "description": "remote claude opus 4.8",
-        "location": "remote",
-        "exec": "claude",
-        "model": "claude-opus-4-8",
-        "host": "aicodegen"
-      },
-      "remote-aicodegen-cc-sonnet": {
-        "description": "remote aicodegen claude sonnet 5",
-        "location": "remote",
-        "exec": "claude",
-        "model": "claude-sonnet-5",
-        "host": "aicodegen"
       }
     }
   }

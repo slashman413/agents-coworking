@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { loadConfig, persistRegistries } from './config.js';
+import { loadConfig, persistRegistries, removeBrainCascade } from './config.js';
 import { EventBus } from './core/events.js';
 import { Store } from './core/store.js';
 import { Dispatcher } from './core/dispatcher.js';
@@ -146,16 +146,8 @@ async function main() {
   // Deregister a brain — and CASCADE: strip it from every agent's chain so no
   // agent is left pointing at a brain that no longer exists.
   app.delete('/api/brains/:id', (req, res) => {
-    const id = req.params.id;
-    delete (config.orchestration.brains || {})[id];
-    let scrubbed = 0;
-    for (const a of Object.values(config.orchestration.agents || {})) {
-      const before = a.brains.length;
-      a.brains = a.brains.filter(b => b !== id);
-      if (a.brains.length !== before) scrubbed++;
-    }
-    persistRegistries(config);
-    res.json({ ok: true, id, agents_scrubbed: scrubbed });
+    const scrubbed = removeBrainCascade(config, req.params.id);
+    res.json({ ok: true, id: req.params.id, agents_scrubbed: scrubbed });
   });
 
   // Graceful shutdown for systemd (SIGTERM) and Ctrl-C (SIGINT)

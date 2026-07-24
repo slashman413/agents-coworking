@@ -133,3 +133,24 @@ export function persistRegistries(config: Config): void {
   disk.orchestration.brains = config.orchestration.brains;
   fs.writeFileSync(configPath, JSON.stringify(disk, null, 2));
 }
+
+/** Remove a brain from the registry AND scrub it from every agent's chain so no
+ *  agent points at a brain that no longer exists. Returns #agents changed. */
+export function removeBrainCascade(config: Config, id: string): number {
+  delete (config.orchestration.brains || {})[id];
+  let scrubbed = 0;
+  for (const a of Object.values(config.orchestration.agents || {})) {
+    const before = a.brains.length;
+    a.brains = a.brains.filter(b => b !== id);
+    if (a.brains.length !== before) scrubbed++;
+  }
+  persistRegistries(config);
+  return scrubbed;
+}
+
+/** Merge a client-declared brain into the registry (auto-registration). */
+export function registerBrain(config: Config, id: string, brain: import('./types.js').BrainConfig): void {
+  config.orchestration.brains = config.orchestration.brains || {};
+  config.orchestration.brains[id] = brain;
+  persistRegistries(config);
+}

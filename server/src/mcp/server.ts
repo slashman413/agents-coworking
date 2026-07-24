@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { Config } from '../types.js';
 import type { Store } from '../core/store.js';
 import type { EventBus } from '../core/events.js';
+import { registerBrain, removeBrainCascade } from '../config.js';
 
 // Stateless streamable-HTTP pattern: build a fresh McpServer + transport per
 // request. Sharing one McpServer across concurrent transports cross-wires
@@ -14,7 +15,10 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
     version: config.server.version || '1.0.0'
   });
 
-  // 1. register_agent
+  // 1. register_agent — a connecting client may also DECLARE the brains it can
+  //    run (clients-capability protocol). Each declared brain is auto-added to
+  //    the registry, owned by this agent, and removed only via deregister_agent
+  //    or the UI (never on heartbeat timeout).
   server.tool(
     'register_agent',
     {
@@ -22,7 +26,15 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
       agent_name: z.string(),
       session_id: z.string().optional(),
       capabilities: z.array(z.string()).optional(),
-      current_task: z.string().optional()
+      current_task: z.string().optional(),
+      brains: z.array(z.object({
+        id: z.string(),
+        location: z.enum(['local', 'remote']).default('remote'),
+        exec: z.enum(['claude', 'hermes', 'agy', 'script']).optional(),
+        model: z.string().optional(),
+        host: z.string().optional(),
+        description: z.string().optional()
+      })).optional()
     },
     async (args) => {
       try {
@@ -33,7 +45,39 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
           capabilities: args.capabilities,
           currentTask: args.current_task
         });
-        return { content: [{ type: 'text', text: JSON.stringify(agent) }] };
+        const registered: string[] = [];
+        for (const b of args.brains || []) {
+          registerBrain(config, b.id, {
+            description: b.description || `${b.id} (auto-registered by ${args.agent_name})`,
+            location: b.location,
+            ...(b.exec ? { exec: b.exec } : {}),
+            ...(b.model !== undefined ? { model: b.model } : {}),
+            ...(b.host ? { host: b.host } : {}),
+            dynamic: true,
+            registeredBy: agent.id
+          });
+          registered.push(b.id);
+        }
+        return { content: [{ type: 'text', text: JSON.stringify({ ...agent, registered_brains: registered }) }] };
+      } catch (e: any) {
+        return { content: [{ type: 'text', text: e.message }], isError: true };
+      }
+    }
+  );
+
+  // 1b. deregister_agent — remove the agent AND every brain it registered,
+  //     scrubbing those brains from all agent chains.
+  server.tool(
+    'deregister_agent',
+    { agent_id: z.string() },
+    async (args) => {
+      try {
+        const brains = config.orchestration.brains || {};
+        const owned = Object.keys(brains).filter(id => brains[id].registeredBy === args.agent_id);
+        let scrubbed = 0;
+        for (const id of owned) scrubbed += removeBrainCascade(config, id);
+        const removed = store.removeAgent(args.agent_id);
+        return { content: [{ type: 'text', text: JSON.stringify({ ok: true, agent_removed: removed, brains_removed: owned, agents_scrubbed: scrubbed }) }] };
       } catch (e: any) {
         return { content: [{ type: 'text', text: e.message }], isError: true };
       }

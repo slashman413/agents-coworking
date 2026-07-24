@@ -473,6 +473,7 @@ class App {
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <strong>${esc(id)}</strong>
           ${badge(b.location, b.location === 'remote' ? '#EAB308' : '#22C55E')}
+          ${b.dynamic ? badge('auto', '#0EA5E9') : ''}
           <button class="btn" data-act="del-brain" data-id="${esc(id)}" style="font-size:0.75rem;margin-left:auto">Deregister</button>
         </div>
         <p style="font-size:0.82rem;color:var(--text-secondary);margin:4px 0">${esc(b.description || '')}</p>

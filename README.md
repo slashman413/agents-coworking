@@ -193,6 +193,16 @@ what* it runs. Set `context.brain` to pin a task. **Local** brains the dispatche
 spawns; **remote** brains it leaves `pending` for that machine's client to claim
 (poll `list_inbox`, match `context.brain` to your own id, `claim_task`).
 
+### Auto-registered brains (clients-capability protocol)
+
+A connecting MCP client can DECLARE the brains it can run via the `register_agent`
+tool's `brains` field; the server auto-adds them to the registry (marked `dynamic`,
+owned by that client). One machine can offer several models at once — e.g.
+aicodegen declares `remote-aicodegen-cc-opus/-sonnet/-fable`. Auto-registered
+brains persist and are removed **only** by the `deregister_agent` tool or the
+Brains view (never on heartbeat timeout); removal cascades out of every agent
+chain. Manage all of this from the dashboard's **Agents** and **Brains** views.
+
 ### Wiring a remote brain machine
 
 `deploy/remote-brain-client.mjs` is a zero-dependency (Node 18+) Cowork **MCP**
