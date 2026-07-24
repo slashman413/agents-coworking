@@ -1,4 +1,4 @@
-/* Cowork MCP Dashboard — data-driven views over the REST API + SSE stream */
+/* Cowork MCP Dashboard — Vercel-quality redesign with Lucide icons + theme toggle */
 
 function esc(s) {
   return String(s ?? '')
@@ -22,7 +22,11 @@ const STATUS_COLORS = {
 };
 
 function badge(text, color) {
-  return `<span class="badge" style="background:${color}22; color:${color}; border:1px solid ${color}55; padding:2px 8px; border-radius:99px; font-size:0.75rem">${esc(text)}</span>`;
+  return `<span class="badge" style="background:${color}18; color:${color}; border:1px solid ${color}40">${esc(text)}</span>`;
+}
+
+function createIcons() {
+  if (window.lucide) lucide.createIcons();
 }
 
 class App {
@@ -37,7 +41,35 @@ class App {
     this.viewTitleEl = document.getElementById('view-title');
     this.toastContainer = document.getElementById('toast-container');
 
+    this.initTheme();
     this.init();
+  }
+
+  initTheme() {
+    const saved = localStorage.getItem('cowork-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    const toggleIcon = document.querySelector('#theme-toggle [data-lucide]');
+    if (toggleIcon) {
+      toggleIcon.setAttribute('data-lucide', saved === 'dark' ? 'moon' : 'sun');
+    }
+    const toggleBtn = document.getElementById('theme-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => this.toggleTheme());
+    }
+    createIcons();
+  }
+
+  toggleTheme() {
+    const html = document.documentElement;
+    const current = html.getAttribute('data-theme');
+    const next = current === 'dark' ? 'light' : 'dark';
+    html.setAttribute('data-theme', next);
+    localStorage.setItem('cowork-theme', next);
+    const toggleIcon = document.querySelector('#theme-toggle [data-lucide]');
+    if (toggleIcon) {
+      toggleIcon.setAttribute('data-lucide', next === 'dark' ? 'moon' : 'sun');
+    }
+    createIcons();
   }
 
   init() {
@@ -65,7 +97,6 @@ class App {
     if (!data.type || data.type === 'ping' || data.type === 'connected') return;
     this.activity.unshift(data);
     this.activity = this.activity.slice(0, 30);
-    // heartbeats are noisy — only re-render for real state changes
     if (data.type !== 'heartbeat') {
       this.toast(data.type, this.describeEvent(data));
       this.renderCurrentView();
@@ -118,8 +149,9 @@ class App {
         default: await this.renderDashboard(); break;
       }
     } catch (error) {
-      this.contentEl.innerHTML = `<div class="empty-state"><h3>Error loading view</h3><p>${esc(error.message)}</p></div>`;
+      this.contentEl.innerHTML = `<div class="empty-state"><p>Error loading view: ${esc(error.message)}</p></div>`;
     }
+    createIcons();
   }
 
   // ── Dashboard ──────────────────────────────────────────────────────────
@@ -129,58 +161,76 @@ class App {
       this.api.get('/status'),
       this.api.get('/dispatcher').catch(() => null)
     ]);
-    const stat = (icon, value, label) => `
+    const stat = (iconName, value, label) => `
       <div class="card stat-card">
-        <div class="stat-icon">${icon}</div>
+        <div class="stat-icon"><i data-lucide="${iconName}"></i></div>
         <div>
           <div class="stat-value">${value}</div>
           <div class="stat-label">${label}</div>
         </div>
       </div>`;
-    const dot = (ok) => `<span class="dot ${ok ? 'connected' : 'disconnected'}" style="display:inline-block; margin-left:8px"></span>`;
+    const dot = (ok) => `<span class="dot ${ok ? 'connected' : 'disconnected'}" style="display:inline-block; margin-left:6px"></span>`;
 
     const platforms = Object.entries(status.platformStatus || {})
-      .map(([id, on]) => `<p style="margin:6px 0">${esc(id)} ${dot(on)}</p>`).join('') || '<p>-</p>';
+      .map(([id, on]) => `<p style="margin:6px 0; font-size:0.875rem">${esc(id)} ${dot(on)}</p>`).join('') || '<p style="color:var(--text-muted)">-</p>';
     const services = Object.entries(status.serviceStatus || {})
-      .map(([id, on]) => `<p style="margin:6px 0">${esc(id)} ${dot(on)}</p>`).join('') || '<p>-</p>';
+      .map(([id, on]) => `<p style="margin:6px 0; font-size:0.875rem">${esc(id)} ${dot(on)}</p>`).join('') || '<p style="color:var(--text-muted)">-</p>';
 
     const roles = dispatcher
       ? Object.entries(dispatcher.roles).map(([r, m]) =>
           `<tr><td style="padding:3px 12px 3px 0">${badge(r, '#7C3AED')}</td><td style="color:var(--text-secondary); font-size:0.85rem">${esc(m)}</td></tr>`).join('')
       : '';
     const running = dispatcher?.running?.length
-      ? dispatcher.running.map(r => `<p style="margin:4px 0">${badge(r.role, '#22C55E')} <span style="font-size:0.85rem">${esc(r.taskId.slice(0, 8))} · ${timeAgo(new Date(r.startedAt).toISOString())}</span></p>`).join('')
-      : '<p style="color:var(--text-secondary)">idle</p>';
+      ? dispatcher.running.map(r =>
+          `<p style="margin:4px 0; font-size:0.85rem">${badge(r.role, '#22C55E')} <span style="color:var(--text-secondary)">${esc(r.taskId.slice(0, 8))} · ${timeAgo(new Date(r.startedAt).toISOString())}</span></p>`).join('')
+      : '<p style="color:var(--text-muted); font-size:0.85rem">Idle</p>';
 
     const activity = this.activity.length
       ? this.activity.slice(0, 12).map(e =>
-          `<p style="margin:6px 0; font-size:0.85rem">${badge(e.type, '#0EA5E9')} ${esc(this.describeEvent(e))} <span style="color:var(--text-secondary)">${timeAgo(e.timestamp)}</span></p>`).join('')
-      : '<p style="color:var(--text-secondary)">Waiting for events…</p>';
+          `<p style="margin:6px 0; font-size:0.85rem">${badge(e.type, '#0EA5E9')} ${esc(this.describeEvent(e))} <span style="color:var(--text-muted)">${timeAgo(e.timestamp)}</span></p>`).join('')
+      : '<p style="color:var(--text-muted); font-size:0.875rem">Waiting for events…</p>';
 
     this.contentEl.innerHTML = `
       <div class="grid-4" style="margin-bottom: var(--space-xl)">
-        ${stat('🤖', status.activeAgents, 'Active Agents')}
-        ${stat('📬', status.inboxSummary.pending + status.inboxSummary.inProgress,
+        ${stat('bot', status.activeAgents, 'Active Agents')}
+        ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
                `Open Tasks (${status.inboxSummary.completed} done)`)}
-        ${stat('📄', status.recentReports, 'Recent Reports')}
-        ${stat('👥', status.rosterCount, 'Agent Roster')}
+        ${stat('file-text', status.recentReports, 'Recent Reports')}
+        ${stat('users', status.rosterCount, 'Agent Roster')}
       </div>
       <div class="grid-2" style="margin-bottom: var(--space-xl)">
         <div class="card">
-          <h3>⚡ Dispatcher ${dispatcher?.enabled ? badge('enabled', '#22C55E') : badge('disabled', '#EF4444')}</h3>
-          <div style="margin-top: var(--space-md)"><h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px">RUNNING NOW</h4>${running}</div>
-          <div style="margin-top: var(--space-md)"><h4 style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:6px">ROLE → MODEL</h4>
-            <table>${roles}</table>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:var(--space-md)">
+            <i data-lucide="zap" style="width:18px;height:18px;color:var(--text-muted)"></i>
+            <h3 style="font-size:0.95rem">Dispatcher</h3>
+            ${dispatcher?.enabled ? badge('enabled', '#22C55E') : badge('disabled', '#EF4444')}
+          </div>
+          <div style="margin-top: var(--space-md)">
+            <h4 class="section-title">Running Now</h4>
+            ${running}
+          </div>
+          <div style="margin-top: var(--space-md)">
+            <h4 class="section-title">Role → Model</h4>
+            <table class="dispatcher-table">${roles}</table>
           </div>
         </div>
         <div class="card">
-          <h3>📡 Live Activity</h3>
-          <div style="margin-top: var(--space-md); max-height:340px; overflow-y:auto">${activity}</div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:var(--space-md)">
+            <i data-lucide="activity" style="width:18px;height:18px;color:var(--text-muted)"></i>
+            <h3 style="font-size:0.95rem">Live Activity</h3>
+          </div>
+          <div style="max-height:340px; overflow-y:auto">${activity}</div>
         </div>
       </div>
       <div class="grid-2">
-        <div class="card"><h3>Platforms</h3><div style="margin-top: var(--space-md)">${platforms}</div></div>
-        <div class="card"><h3>Services</h3><div style="margin-top: var(--space-md)">${services}</div></div>
+        <div class="card">
+          <h3 style="font-size:0.95rem; margin-bottom:var(--space-md)">Platforms</h3>
+          <div>${platforms}</div>
+        </div>
+        <div class="card">
+          <h3 style="font-size:0.95rem; margin-bottom:var(--space-md)">Services</h3>
+          <div>${services}</div>
+        </div>
       </div>`;
   }
 
@@ -189,8 +239,12 @@ class App {
   async renderAgents() {
     const agents = await this.api.get('/agents');
     if (!agents.length) {
-      this.contentEl.innerHTML = `<div class="empty-state"><div style="font-size:3rem; margin-bottom:1rem">🤖</div>
-        <h3>No agents currently active</h3><p>Agents register when they connect via MCP.</p></div>`;
+      this.contentEl.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon"><i data-lucide="bot"></i></div>
+          <h3>No agents currently active</h3>
+          <p>Agents register when they connect via MCP.</p>
+        </div>`;
       return;
     }
     this.contentEl.innerHTML = `<div class="grid-3">` + agents.map(a => `
@@ -199,11 +253,15 @@ class App {
           <span class="agent-title">${esc(a.agentName)}</span>
           ${badge(a.status, STATUS_COLORS[a.status] || '#94A3B8')}
         </div>
-        <p style="margin:6px 0">${badge(a.platform, '#D97757')} <span style="font-size:0.8rem; color:var(--text-secondary)">${esc((a.id || '').slice(0, 8))}</span></p>
-        ${a.currentTask ? `<p class="agent-task" style="font-size:0.85rem">📌 ${esc(a.currentTask)}</p>` : ''}
-        ${a.capabilities?.length ? `<p style="font-size:0.8rem; color:var(--text-secondary); margin-top:6px">${a.capabilities.map(c => esc(c)).join(' · ')}</p>` : ''}
-        <div class="agent-footer" style="margin-top:8px; font-size:0.8rem; color:var(--text-secondary)">
-          ♥ ${timeAgo(a.lastHeartbeat)} · joined ${timeAgo(a.registeredAt)}
+        <p style="margin:6px 0">
+          ${badge(a.platform, '#D97757')}
+          <span style="font-size:0.8rem; color:var(--text-muted); margin-left:4px">${esc((a.id || '').slice(0, 8))}</span>
+        </p>
+        ${a.currentTask ? `<p class="agent-task"><i data-lucide="pushpin" style="width:12px;height:12px;flex-shrink:0"></i> ${esc(a.currentTask)}</p>` : ''}
+        ${a.capabilities?.length ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:6px">${a.capabilities.map(c => esc(c)).join(' · ')}</p>` : ''}
+        <div class="agent-footer">
+          <span><i data-lucide="heart" style="width:12px;height:12px;vertical-align:middle;margin-right:2px"></i> ${timeAgo(a.lastHeartbeat)}</span>
+          <span>joined ${timeAgo(a.registeredAt)}</span>
         </div>
       </div>`).join('') + `</div>`;
   }
@@ -216,42 +274,42 @@ class App {
     const pills = ['', 'pending', 'in-progress', 'done'].map(f => {
       const label = f === '' ? 'All' : f;
       const active = this.inboxFilter === f;
-      return `<button class="btn pill" data-filter="${f}" style="${active ? 'background:var(--bg-tertiary)' : ''}">${label}</button>`;
+      return `<button class="btn pill" data-filter="${f}" style="${active ? 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)' : ''}">${esc(label)}</button>`;
     }).join(' ');
 
     const rows = tasks.length ? tasks.map(t => {
       const role = t.context?.role || (t.tags || [])[0] || '';
       return `
-      <div class="card" style="margin-bottom: var(--space-md); cursor:pointer" data-task="${esc(t.id)}">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
-          <div>
+      <div class="card task-card" style="margin-bottom: var(--space-md)" data-task="${esc(t.id)}">
+        <div class="task-card-header">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
             ${badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
             ${role ? badge(role, '#7C3AED') : ''}
-            <strong style="margin-left:6px">${esc(t.title)}</strong>
+            <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
           </div>
-          <span style="font-size:0.8rem; color:var(--text-secondary)">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}</span>
+          <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}</span>
         </div>
-        <div class="task-detail" style="display:none; margin-top: var(--space-md)">
-          <h4 style="font-size:0.8rem; color:var(--text-secondary)">DESCRIPTION</h4>
-          <pre style="white-space:pre-wrap; font-size:0.85rem; margin:6px 0 12px">${esc(t.description)}</pre>
-          ${t.result ? `<h4 style="font-size:0.8rem; color:var(--text-secondary)">RESULT</h4>
-          <pre style="white-space:pre-wrap; font-size:0.85rem; margin:6px 0; max-height:400px; overflow-y:auto; background:var(--bg-tertiary); padding:10px; border-radius:8px">${esc(t.result)}</pre>` : ''}
-          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-secondary); margin-top:8px">claimed by ${esc(t.claimedBy.slice(0, 8))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
+        <div class="task-detail">
+          <h4>Description</h4>
+          <pre style="background:var(--bg-tertiary); padding:10px; border-radius:8px">${esc(t.description)}</pre>
+          ${t.result ? `<div style="margin-top:12px"><h4>Result</h4>
+          <pre style="background:var(--bg-tertiary); padding:10px; border-radius:8px; max-height:400px; overflow-y:auto">${esc(t.result)}</pre></div>` : ''}
+          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(t.claimedBy.slice(0, 8))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
         </div>
       </div>`;
     }).join('') : `<div class="empty-state"><p>No tasks${this.inboxFilter ? ` with status "${esc(this.inboxFilter)}"` : ''}.</p></div>`;
 
     this.contentEl.innerHTML = `
-      <div style="margin-bottom: var(--space-lg)">${pills}</div>
+      <div style="margin-bottom: var(--space-lg); display:flex; gap:8px">${pills}</div>
       ${rows}`;
 
     this.contentEl.querySelectorAll('[data-filter]').forEach(b =>
       b.addEventListener('click', () => { this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
       card.addEventListener('click', (e) => {
-        if (e.target.closest('pre')) return; // allow text selection in output
+        if (e.target.closest('pre')) return;
         const d = card.querySelector('.task-detail');
-        d.style.display = d.style.display === 'none' ? 'block' : 'none';
+        d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
       }));
   }
 
@@ -260,15 +318,23 @@ class App {
   async renderReports() {
     const reports = await this.api.get('/reports?limit=100');
     if (!reports.length) {
-      this.contentEl.innerHTML = `<div class="empty-state"><p>No reports filed yet.</p></div>`;
+      this.contentEl.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon"><i data-lucide="file-text"></i></div>
+          <h3>No reports filed yet</h3>
+          <p>Reports appear here when agents submit them.</p>
+        </div>`;
       return;
     }
     this.contentEl.innerHTML = reports.map(r => `
-      <div class="card" style="margin-bottom: var(--space-md); cursor:pointer" data-report="${esc(r.id)}">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap">
-          <div>${badge(r.type, '#0EA5E9')} ${badge(r.status, r.status === 'final' ? '#22C55E' : '#EAB308')}
-            <strong style="margin-left:6px">${esc(r.title)}</strong></div>
-          <span style="font-size:0.8rem; color:var(--text-secondary)">${esc(r.author?.platform || '?')}/${esc(r.author?.agent || '?')} · ${timeAgo(r.createdAt)}</span>
+      <div class="card task-card" style="margin-bottom: var(--space-md)" data-report="${esc(r.id)}">
+        <div class="task-card-header">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+            ${badge(r.type, '#0EA5E9')}
+            ${badge(r.status, r.status === 'final' ? '#22C55E' : '#EAB308')}
+            <strong style="margin-left:4px; font-size:0.9rem">${esc(r.title)}</strong>
+          </div>
+          <span class="task-meta">${esc(r.author?.platform || '?')}/${esc(r.author?.agent || '?')} · ${timeAgo(r.createdAt)}</span>
         </div>
         <p style="font-size:0.85rem; color:var(--text-secondary); margin-top:6px">${esc(r.summary || '')}</p>
         <div class="report-body" style="display:none; margin-top: var(--space-md)"></div>
@@ -278,7 +344,7 @@ class App {
       card.addEventListener('click', async (e) => {
         if (e.target.closest('pre')) return;
         const body = card.querySelector('.report-body');
-        if (body.style.display === 'none') {
+        if (body.style.display === 'none' || !body.style.display) {
           if (!body.dataset.loaded) {
             const full = await this.api.get(`/reports/${card.dataset.report}`);
             body.innerHTML = `<pre style="white-space:pre-wrap; font-size:0.85rem; max-height:500px; overflow-y:auto; background:var(--bg-tertiary); padding:10px; border-radius:8px">${esc(full.content || full.summary || '')}</pre>`;
@@ -299,7 +365,7 @@ class App {
     for (const a of roster) (byDivision[a.divisionLabel || a.division || 'other'] ||= []).push(a);
 
     this.contentEl.innerHTML = `
-      <input id="roster-search" placeholder="Search ${roster.length} agents…" style="width:100%; padding:10px 14px; margin-bottom: var(--space-lg); background:var(--bg-tertiary); border:1px solid var(--bg-tertiary); border-radius:10px; color:inherit; font:inherit">
+      <input id="roster-search" class="roster-search" placeholder="Search ${roster.length} agents…">
       <div id="roster-list"></div>`;
 
     const listEl = this.contentEl.querySelector('#roster-list');
@@ -309,14 +375,17 @@ class App {
         const hits = f ? agents.filter(a =>
           a.name.toLowerCase().includes(f) || (a.description || '').toLowerCase().includes(f)) : agents;
         if (!hits.length) return '';
-        return `<h3 style="margin: var(--space-lg) 0 var(--space-md)">${esc(div)} <span style="color:var(--text-secondary); font-size:0.8rem">(${hits.length})</span></h3>
+        return `<h3 style="margin: var(--space-lg) 0 var(--space-md); font-size:0.95rem">${esc(div)} <span style="color:var(--text-muted); font-size:0.8rem; font-weight:400">(${hits.length})</span></h3>
           <div class="grid-3">` + hits.map(a => `
           <div class="card agent-card">
-            <div class="agent-header"><span class="agent-title">${a.emoji ? esc(a.emoji) + ' ' : ''}${esc(a.name)}</span></div>
+            <div class="agent-header">
+              <span class="agent-title">${a.emoji ? esc(a.emoji) + ' ' : ''}${esc(a.name)}</span>
+            </div>
             <p style="font-size:0.83rem; color:var(--text-secondary); margin-top:6px">${esc((a.description || '').slice(0, 140))}</p>
-            ${a.vibe ? `<p style="font-size:0.8rem; font-style:italic; margin-top:6px">${esc(a.vibe)}</p>` : ''}
+            ${a.vibe ? `<p style="font-size:0.8rem; font-style:italic; color:var(--text-muted); margin-top:6px">${esc(a.vibe)}</p>` : ''}
           </div>`).join('') + `</div>`;
       }).join('') || `<div class="empty-state"><p>No agents match.</p></div>`;
+      createIcons();
     };
     render('');
     this.contentEl.querySelector('#roster-search').addEventListener('input', (e) => render(e.target.value));
@@ -327,8 +396,13 @@ class App {
   async renderConfig() {
     const config = await this.api.get('/config');
     this.contentEl.innerHTML = `
-      <div class="card"><h3>Configuration <span style="font-size:0.8rem; color:var(--text-secondary)">(config.json — API key masked)</span></h3>
-        <pre style="white-space:pre-wrap; font-size:0.83rem; margin-top: var(--space-md); max-height:70vh; overflow-y:auto">${esc(JSON.stringify(config, null, 2))}</pre>
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:var(--space-md)">
+          <i data-lucide="settings" style="width:18px;height:18px;color:var(--text-muted)"></i>
+          <h3 style="font-size:0.95rem">Configuration</h3>
+          <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400">(config.json — API keys masked)</span>
+        </div>
+        <pre style="white-space:pre-wrap; font-size:0.83rem; max-height:70vh; overflow-y:auto">${esc(JSON.stringify(config, null, 2))}</pre>
       </div>`;
   }
 }

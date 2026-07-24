@@ -174,6 +174,12 @@ Role → model mapping (`config.json` → `orchestration.roles`):
 | `researcher` | Hermes | Qwen3.6-27B-NVFP4 (local vLLM :8001) |
 | `sales`, `marketing`, `generalist` | Hermes | Qwen3.6-35B-A3B-NVFP4 |
 | `antigravity` | AGY CLI | account default |
+| `video` | ComfyUI LTX pipeline (`deploy/video-pipeline.sh`) | short vertical promo/shorts — Flux still → LTX img2vid → stitched 1080×1920. **LTX only** (GB10-safe with the 35B up); never Wan/Hunyuan/SVD. |
+
+The always-on coordinator agent shown in **Active Agents** as `cowork/orchestrator`
+polls the inbox, LLM-classifies roleless tasks, reclaims orphans, and dispatches;
+transient per-task workers appear as e.g. `hermes/planner (Qwen3.6-35B-A3B-NVFP4)`
+or `pipeline/video (ComfyUI-LTX)` while running.
 
 CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates a task with
 `context.role: "orchestrator"` → the Fable-5 orchestrator decomposes it into

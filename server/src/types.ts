@@ -11,8 +11,12 @@ export interface ServiceConfig {
 }
 
 export interface RoleConfig {
-  exec: 'claude' | 'hermes' | 'agy';
+  /** claude/hermes/agy spawn an LLM CLI; script runs an arbitrary command
+   *  (e.g. a media pipeline) with the task passed via COWORK_TASK_* env vars. */
+  exec: 'claude' | 'hermes' | 'agy' | 'script';
   model: string;
+  /** argv for exec:script roles (the command + args to run). */
+  command?: string[];
   /** Role to hand the task to after a failed attempt (see Dispatcher handover). */
   fallback?: string;
 }

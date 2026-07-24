@@ -20,6 +20,8 @@ import type { Store } from './store.js';
  * agents polling the inbox themselves). Tag a task `manual` to always skip it.
  */
 export class Dispatcher {
+  /** Name of the always-on coordinator agent shown in Active Agents. */
+  static readonly COORDINATOR_NAME = 'orchestrator';
   private config: Config;
   private store: Store;
   private eventBus: EventBus;
@@ -42,9 +44,11 @@ export class Dispatcher {
       return;
     }
     // Drop ghost registrations from previous service runs — there is exactly
-    // one dispatcher per server process.
+    // one coordinator per server process. Sweep the old "dispatcher" name too
+    // so a rename doesn't leave a stale card.
     for (const a of this.store.getActiveAgents()) {
-      if ((a.platform === 'cowork' && a.agentName === 'dispatcher') || a.sessionId === 'dispatcher-worker') {
+      const isCoordinator = a.platform === 'cowork' && (a.agentName === Dispatcher.COORDINATOR_NAME || a.agentName === 'dispatcher');
+      if (isCoordinator || a.sessionId === 'dispatcher-worker') {
         this.store.removeAgent(a.id);
       }
     }
@@ -63,7 +67,7 @@ export class Dispatcher {
     }
     const agent = this.store.registerAgent({
       platform: 'cowork',
-      agentName: 'dispatcher',
+      agentName: Dispatcher.COORDINATOR_NAME,
       capabilities: Object.keys(orch.roles)
     });
     this.agentId = agent.id;
@@ -184,6 +188,7 @@ export class Dispatcher {
       `- researcher: deep research, market/competitive analysis\n` +
       `- sales: pricing, monetization, outreach\n` +
       `- marketing: copy, campaigns, positioning, social\n` +
+      `- video: producing a short promo/shorts VIDEO (image+motion+music) via the ComfyUI pipeline\n` +
       `- generalist: anything else\n\n` +
       `Reply with ONLY the single role name from the list above. No other text.`;
 
@@ -198,8 +203,12 @@ export class Dispatcher {
       const roles = this.config.orchestration.roles;
       // Pick the last role name that appears in the output (models often
       // preface the answer). Fall back if nothing matches.
-      const found = Object.keys(roles).filter(r => new RegExp(`\\b${r}\\b`).test(out));
-      const chosen = found.length ? found[found.length - 1]
+      // Prefer the most specific match (longest role name) so "engineer-local"
+      // wins over "engineer" when both appear.
+      const found = Object.keys(roles)
+        .filter(r => !r.startsWith('orchestrator') && new RegExp(`\\b${r}\\b`).test(out))
+        .sort((a, b) => b.length - a.length);
+      const chosen = found.length ? found[0]
         : (roles[cls.fallbackRole] ? cls.fallbackRole : this.config.orchestration.defaultRole);
       const fresh = this.store.getTask(task.id);
       if (fresh && fresh.status === 'pending') {
@@ -252,7 +261,7 @@ export class Dispatcher {
         '```bash',
         `curl -s -X POST http://localhost:${port}/api/inbox -H 'Content-Type: application/json' -d '{"title":"...","description":"...(full standalone instructions)...","from":{"platform":"claude","agent":"orchestrator"},"to":{},"priority":"normal","context":{"role":"<role>"},"tags":["<role>"]}'`,
         '```',
-        `Available roles: engineer (Claude Opus — code), engineer-local (deepseek — code, cheaper), planner (product planning), researcher (deep research), sales, marketing, generalist.`,
+        `Available roles: engineer (Claude Opus — code), engineer-local (deepseek — code, cheaper), planner (product planning), researcher (deep research), sales, marketing, generalist, video (short promo/shorts video via the ComfyUI LTX pipeline).`,
         `Each subtask description must be fully standalone — the executing agent sees ONLY that description.`,
         `If a subtask must wait for others (e.g. a final synthesis/integration step), add their task ids to its context: {"role":"planner","dependsOn":["<id1>","<id2>"]} — the API response to each POST gives you the created task's id. Dependent tasks are held until all dependencies are done, and their results are automatically shown to the dependent agent.`,
         `After dispatching, output a summary of the plan: which subtasks you created and why. Check existing tasks first with: curl -s http://localhost:${port}/api/inbox?limit=20`,
@@ -273,6 +282,11 @@ export class Dispatcher {
           : ['hermes', '-z', prompt];
       case 'agy':
         return ['agy', '-p', prompt];
+      case 'script':
+        // Task is passed via COWORK_TASK_* env vars (see execute); the command
+        // is a fixed pipeline, not an LLM prompt.
+        if (!roleCfg.command?.length) throw new Error(`role exec:script needs a "command" array`);
+        return roleCfg.command;
       default:
         throw new Error(`Unknown exec type: ${(roleCfg as RoleConfig).exec}`);
     }
@@ -292,8 +306,12 @@ export class Dispatcher {
     // Surface the worker as its own active agent so the dashboard shows WHO
     // is working (e.g. hermes/planner (Qwen3.6-35B-A3B-NVFP4)), not just the
     // dispatcher. Deregistered when the run ends.
-    const modelShort = (roleCfg.model || 'default').split('/').pop()!.split(':').pop()!;
-    const workerPlatform = roleCfg.exec === 'claude' ? 'claude' : roleCfg.exec === 'agy' ? 'antigravity' : 'hermes';
+    const modelShort = roleCfg.exec === 'script'
+      ? (roleCfg.model || 'pipeline')
+      : (roleCfg.model || 'default').split('/').pop()!.split(':').pop()!;
+    const workerPlatform = roleCfg.exec === 'claude' ? 'claude'
+      : roleCfg.exec === 'agy' ? 'antigravity'
+      : roleCfg.exec === 'script' ? 'pipeline' : 'hermes';
     const worker = this.store.registerAgent({
       platform: workerPlatform,
       agentName: `${role} (${modelShort})`,
@@ -311,7 +329,15 @@ export class Dispatcher {
 
     const output = await new Promise<{ ok: boolean; text: string }>((resolve) => {
       const child = spawn(argv[0], argv.slice(1), {
-        env: { ...process.env },
+        env: {
+          ...process.env,
+          // exec:script pipelines read the task from these instead of a prompt.
+          COWORK_TASK_ID: task.id,
+          COWORK_TASK_TITLE: task.title,
+          COWORK_TASK_DESCRIPTION: task.description,
+          COWORK_TASK_CONTEXT: JSON.stringify(task.context || {}),
+          COWORK_API: `http://localhost:${this.config.server.port}/api`
+        },
         stdio: ['ignore', 'pipe', 'pipe']
       });
       let out = '';

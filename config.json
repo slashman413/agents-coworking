@@ -123,6 +123,13 @@
       "orchestrator-cloud": {
         "exec": "claude",
         "model": "claude-sonnet-5"
+      },
+      "video": {
+        "exec": "script",
+        "model": "ComfyUI-LTX",
+        "command": [
+          "/home/wayne/workspace/github/slashman413/agents-coworking/deploy/video-pipeline.sh"
+        ]
       }
     }
   }
