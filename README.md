@@ -549,6 +549,10 @@ without editing any file):
 COWORK_CONFIG=~/.cowork/config.staging.json COWORK_PORT=6900 npm start
 ```
 
+The roster is cached in memory and rescanned at most once per `COWORK_ROSTER_TTL_MS`
+(default 30000). New agents / a submodule bump propagate within that window with no
+restart; set `0` to rescan on every query, or a larger value to reduce disk work.
+
 ---
 
 ## License

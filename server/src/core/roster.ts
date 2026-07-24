@@ -8,20 +8,36 @@ export class Roster {
   private repoPath: string;
   private agents: AgentCard[] = [];
   private divisions: any = {};
-  private loaded = false;
+  private loadedAt = 0;
+  // Lightweight cache: every roster query (dashboard, classifier, roster views)
+  // calls loadAll, so we scan the agency-agents dir at most once per TTL instead
+  // of on every call. A short TTL keeps near-live propagation — a newly added
+  // agent or a submodule bump shows up within the window without a server
+  // restart — while hot paths just return the in-memory array. Override with
+  // COWORK_ROSTER_TTL_MS (0 = always rescan).
+  private ttlMs = process.env.COWORK_ROSTER_TTL_MS !== undefined
+    ? Math.max(0, Number(process.env.COWORK_ROSTER_TTL_MS) || 0)
+    : 30_000;
 
   constructor(repoPath: string) {
     this.repoPath = repoPath;
   }
 
   public loadAll(): AgentCard[] {
-    if (this.loaded) return this.agents;
-    
-    this.agents = [];
+    if (this.loadedAt && Date.now() - this.loadedAt < this.ttlMs) return this.agents;
+    return this.scan();
+  }
+
+  /** Rescan the agency-agents directory and refresh the cache. Builds into a
+   *  local array so a mid-scan error never leaves a partial cache exposed. */
+  private scan(): AgentCard[] {
+    const agents: AgentCard[] = [];
+
     if (!fs.existsSync(this.repoPath)) {
       console.warn(`Agency agents repo not found at ${this.repoPath}`);
-      this.loaded = true;
-      return [];
+      this.agents = agents;
+      this.loadedAt = Date.now();
+      return agents;
     }
 
     const divisionsPath = path.join(this.repoPath, 'divisions.json');
@@ -39,18 +55,18 @@ export class Roster {
       cwd: this.repoPath,
       ignore: ['docs/**', 'examples/**', 'scripts/**', '**/README.md']
     });
-    
+
     for (const file of agentFiles) {
       const fullPath = path.join(this.repoPath, file);
       try {
         const content = fs.readFileSync(fullPath, 'utf-8');
         const parsed = matter(content);
-        
+
         const slug = path.basename(file, '.md');
         const division = path.dirname(file).split(path.sep)[0] || 'unknown';
         const divisionMeta = this.divisions[division] || {};
-        
-        const agent: AgentCard = {
+
+        agents.push({
           slug: parsed.data.slug || slug,
           name: parsed.data.name || slug,
           description: parsed.data.description || '',
@@ -62,15 +78,14 @@ export class Roster {
           divisionIcon: divisionMeta.icon,
           sourcePath: fullPath,
           platforms: parsed.data.platforms || []
-        };
-        
-        this.agents.push(agent);
+        });
       } catch (e) {
         console.error(`Failed to parse agent file: ${file}`, e);
       }
     }
 
-    this.loaded = true;
+    this.agents = agents;
+    this.loadedAt = Date.now();
     return this.agents;
   }
 
@@ -112,8 +127,9 @@ export class Roster {
     }
   }
 
+  /** Force an immediate rescan on the next query, bypassing the TTL. */
   public reload(): void {
-    this.loaded = false;
+    this.loadedAt = 0;
     this.loadAll();
   }
 }
