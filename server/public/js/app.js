@@ -55,6 +55,7 @@ class App {
     this.sse = null;
     this.activity = [];
     this.inboxFilter = '';
+    this.inboxSearch = '';     // Task Inbox title search (client-side, on top of the status filter)
     this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
@@ -482,7 +483,7 @@ class App {
       const brainLabel = c.ranBrain || c.brain || '';
       const arts = Array.isArray(t.artifacts) ? t.artifacts : [];
       return `
-      <div class="card task-card" style="margin-bottom: var(--space-md)" data-task="${esc(t.id)}">
+      <div class="card task-card" style="margin-bottom: var(--space-md)" data-task="${esc(t.id)}" data-title="${esc((t.title || '').toLowerCase())}">
         <div class="task-card-header">
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
             ${badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
@@ -504,11 +505,19 @@ class App {
     }).join('') : `<div class="empty-state"><p>No tasks${this.inboxFilter ? ` with status "${esc(this.inboxFilter)}"` : ''}.</p></div>`;
 
     this.contentEl.innerHTML = `
-      <div style="margin-bottom: var(--space-lg); display:flex; gap:8px">${pills}</div>
+      <div style="display:flex; gap:8px; margin-bottom:10px">${pills}</div>
+      <input id="inbox-search" type="search" placeholder="Search titles…" value="${esc(this.inboxSearch || '')}"
+        style="width:100%; margin-bottom: var(--space-lg); padding:8px 12px; background:var(--bg-tertiary); border:1px solid var(--bg-tertiary); border-radius:10px; color:inherit; font:inherit; font-size:0.85rem">
+      <div id="inbox-nomatch" style="display:none; color:var(--text-muted); font-size:0.85rem; padding:8px 0">No task titles match your search.</div>
       ${rows}`;
 
     this.contentEl.querySelectorAll('[data-filter]').forEach(b =>
       b.addEventListener('click', () => { this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
+
+    // Live client-side title filter, layered on top of the status filter.
+    const searchEl = this.contentEl.querySelector('#inbox-search');
+    searchEl.addEventListener('input', () => { this.inboxSearch = searchEl.value; this.applyInboxSearch(); });
+
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
       card.addEventListener('click', (e) => {
         if (e.target.closest('pre, .md-block, a, button')) return;   // don't toggle when interacting with content
@@ -516,6 +525,22 @@ class App {
         d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
         createIcons();
       }));
+
+    this.applyInboxSearch();
+  }
+
+  // Show only task cards whose title contains the search text (case-insensitive).
+  applyInboxSearch() {
+    const q = (this.inboxSearch || '').trim().toLowerCase();
+    const cards = this.contentEl.querySelectorAll('[data-task]');
+    let shown = 0;
+    cards.forEach(card => {
+      const match = !q || (card.dataset.title || '').includes(q);
+      card.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
+    const note = this.contentEl.querySelector('#inbox-nomatch');
+    if (note) note.style.display = (q && shown === 0 && cards.length) ? '' : 'none';
   }
 
   // ── Reports ────────────────────────────────────────────────────────────
