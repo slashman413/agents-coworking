@@ -3,6 +3,17 @@ import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store } from './store.js';
 
+/** Remove ANSI CSI/OSC escape sequences and lone carriage returns. */
+// eslint-disable-next-line no-control-regex
+const OSC_CSI_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g;
+// Ollama's CLI redraws wrapped words even to a pipe as `<chars>ESC[<N>DESC[K`;
+// that sequence means "delete the previous N chars", so apply it, then drop any
+// remaining escape sequences and carriage returns.
+function stripAnsi(s: string): string {
+  return s.replace(/(.{0,200}?)\x1b\[(\d+)D\x1b\[K/gs, (_m, pre, n) => pre.slice(0, Math.max(0, pre.length - Number(n))))
+          .replace(OSC_CSI_RE, '').replace(/\r/g, '');
+}
+
 /** A fully-resolved execution plan for one attempt of one task. */
 interface ExecPlan {
   agent: string;                // agent/profile name driving the prompt ('' if none)
@@ -441,8 +452,11 @@ export class Dispatcher {
       });
       child.on('close', (code) => {
         clearTimeout(timer);
-        if (code === 0 && out.trim()) resolve({ ok: true, text: out.trim() });
-        else resolve({ ok: code === 0, text: (out.trim() || err.trim() || `exit code ${code}`) });
+        // Strip ANSI/terminal control sequences some CLIs emit even to a pipe
+        // (e.g. Ollama's streaming cursor redraws) so results are clean text.
+        const clean = stripAnsi(out).trim();
+        if (code === 0 && clean) resolve({ ok: true, text: clean });
+        else resolve({ ok: code === 0, text: (clean || stripAnsi(err).trim() || `exit code ${code}`) });
       });
     });
 

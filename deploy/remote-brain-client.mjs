@@ -106,6 +106,14 @@ const execToPlatform = e => e === 'claude' ? 'claude' : e === 'agy' ? 'antigravi
 const PLATFORM = execToPlatform(Object.values(BRAIN)[0]?.exec || EXEC_DEFAULT);
 
 function need(k) { const v = process.env[k]; if (!v) { console.error(`Missing required env ${k}`); process.exit(2); } return v; }
+const OSC_CSI_RE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g;
+// Ollama's CLI redraws wrapped words even to a pipe as `<chars>ESC[<N>DESC[K`;
+// that sequence means "delete the previous N chars", so apply it, then drop any
+// remaining escape sequences and carriage returns.
+function stripAnsi(s) {
+  return s.replace(/(.{0,200}?)\x1b\[(\d+)D\x1b\[K/gs, (_m, pre, n) => pre.slice(0, Math.max(0, pre.length - Number(n))))
+          .replace(OSC_CSI_RE, '').replace(/\r/g, '');
+}
 
 let sessionId = null, rpcId = 0;
 const running = new Set();
@@ -161,7 +169,11 @@ function runModel(brain, prompt) {
     const timer = setTimeout(() => { child.kill('SIGTERM'); resolve({ ok: false, text: `TIMEOUT\n${out}\n${err}` }); }, TASK_TIMEOUT_MS);
     child.stdout.on('data', d => out += d); child.stderr.on('data', d => err += d);
     child.on('error', e => { clearTimeout(timer); resolve({ ok: false, text: `SPAWN ERROR: ${e.message}` }); });
-    child.on('close', code => { clearTimeout(timer); resolve({ ok: code === 0 && !!out.trim(), text: out.trim() || err.trim() || `exit ${code}` }); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      const clean = stripAnsi(out).trim();
+      resolve({ ok: code === 0 && !!clean, text: clean || stripAnsi(err).trim() || `exit ${code}` });
+    });
   });
 }
 async function handle(task, agentId) {
