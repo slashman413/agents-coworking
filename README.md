@@ -206,19 +206,39 @@ chain. Manage all of this from the dashboard's **Agents** and **Brains** views.
 ### Wiring a remote brain machine
 
 `deploy/remote-brain-client.mjs` is a zero-dependency (Node 18+) Cowork **MCP**
-client that does exactly that loop. On the remote machine:
+client that does exactly that loop. Its header comment documents every env var.
+
+**Quickest — run it directly** (foreground; good for a first test). One brain:
 
 ```bash
-git clone https://github.com/slashman413/agents-coworking   # for the script
-mkdir -p ~/.config/cowork-remote-brain
-cp agents-coworking/deploy/remote-brain-client.env.example ~/.config/cowork-remote-brain/fable.env
-# edit fable.env: COWORK_URL, BRAIN_ID, EXEC, MODEL, COWORK_CLIENT_JS
-cp agents-coworking/deploy/cowork-remote-brain@.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-brain@fable
+git clone https://github.com/slashman413/cowork
+COWORK_URL=http://<cowork-host>:6868 EXEC=claude MODEL=claude-sonnet-5 \
+  BRAIN_ID=remote-<host>-cc-sonnet \
+  node cowork/deploy/remote-brain-client.mjs
 ```
 
-It connects to `COWORK_URL/mcp`, `register_agent`s, then polls and claims only
-tasks whose `context.brain` == its `BRAIN_ID`, runs the local `EXEC`/`MODEL`, and
+Several brains from one machine (declares them all; each becomes a targetable brain):
+
+```bash
+COWORK_URL=http://<cowork-host>:6868 EXEC=claude HOST=<host> \
+  BRAINS='[{"id":"remote-<host>-cc-opus","model":"claude-opus-4-8"},
+           {"id":"remote-<host>-cc-sonnet","model":"claude-sonnet-5"}]' \
+  node cowork/deploy/remote-brain-client.mjs
+```
+
+**As a boot service** (recommended for permanent machines):
+
+```bash
+mkdir -p ~/.config/cowork-remote-brain
+cp cowork/deploy/remote-brain-client.env.example ~/.config/cowork-remote-brain/aicodegen.env
+# edit: COWORK_URL, BRAINS (or BRAIN_ID), EXEC, HOST, COWORK_CLIENT_JS
+cp cowork/deploy/cowork-remote-brain@.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-brain@aicodegen
+```
+
+It connects to `COWORK_URL/mcp`, `register_agent`s (declaring its `BRAINS`, which
+auto-register into the registry), then polls and claims only tasks whose
+`context.brain` is one of its brain ids, runs the matching `EXEC`/`MODEL`, and
 `complete_task`s with a filed report — appearing in Active Agents like any other
 worker. **Flexible**: the same script serves any brain by changing env only.
 **Scalable**: add machines/brains by adding `<name>.env` files; claims are atomic
