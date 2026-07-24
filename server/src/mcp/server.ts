@@ -77,6 +77,7 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
           capabilities: args.capabilities,
           currentTask: args.current_task
         });
+        store.resetCounters(args.agent_name);   // fresh client → fresh counters
         const registered: string[] = [];
         for (const b of args.brains || []) {
           registerBrain(config, b.id, {

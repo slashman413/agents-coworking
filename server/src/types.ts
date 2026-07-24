@@ -80,8 +80,17 @@ export interface OrchestrationConfig {
   pollIntervalMs: number;
   taskTimeoutMs: number;
   defaultRole: string;
-  /** First-class agents, each with an ordered brain fallback chain. */
+  /** The global default brain fallback chain (ordered brain ids). Used by any
+   *  roster-agent task whose division has no override. Drag-sortable in the UI. */
+  defaultChain?: string[];
+  /** Per-division overrides of the default chain (division id -> brain ids). */
+  divisionChains?: Record<string, string[]>;
+  /** Special (non-roster) executor agents: orchestrator (router/decomposer),
+   *  video (LTX pipeline), generalist (fallback). Each has its own brain chain. */
   agents: Record<string, AgentConfig>;
+  /** Grace period before a task on a REMOTE brain in a chain auto-advances to
+   *  the next brain if no client has claimed it (ms; 0 disables). */
+  remoteGraceMs?: number;
   /** Legacy role map (pre-agents). Read only if an agent of the same name is
    *  absent; kept so old configs keep working. */
   roles?: Record<string, RoleConfig>;
@@ -170,6 +179,8 @@ export interface Task {
   completedAt?: string;
   result?: string;
   reportPath?: string;
+  /** Filenames collected from the task's artifacts dir (downloadable when done). */
+  artifacts?: string[];
 }
 
 export interface Report {

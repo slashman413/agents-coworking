@@ -108,6 +108,22 @@ export class Store {
     return agents;
   }
 
+  // ── Per-client × per-brain invocation counters (in-memory, non-persistent;
+  //    reset on service restart and when a client re-registers). ──────────────
+  private counters = { ran: new Map<string, Map<string, number>>(), submitted: new Map<string, Map<string, number>>() };
+  private bump(m: Map<string, Map<string, number>>, client: string, brain: string): void {
+    if (!m.has(client)) m.set(client, new Map());
+    const b = m.get(client)!;
+    b.set(brain, (b.get(brain) || 0) + 1);
+  }
+  public countRun(client: string, brain: string): void { this.bump(this.counters.ran, client, brain); }
+  public countSubmitted(client: string, brain: string): void { this.bump(this.counters.submitted, client, brain); }
+  public resetCounters(client: string): void { this.counters.ran.delete(client); this.counters.submitted.delete(client); }
+  public getCounters(): { ran: Record<string, Record<string, number>>; submitted: Record<string, Record<string, number>> } {
+    const toObj = (m: Map<string, Map<string, number>>) => Object.fromEntries([...m].map(([k, v]) => [k, Object.fromEntries(v)]));
+    return { ran: toObj(this.counters.ran), submitted: toObj(this.counters.submitted) };
+  }
+
   public removeAgent(id: string): boolean {
     const existed = this.activeAgents.delete(id);
     if (existed) this.saveActiveAgents();
@@ -333,6 +349,18 @@ export class Store {
 
   public getDivisions(): any {
     return this.roster.getDivisions();
+  }
+
+  public divisionIds(): string[] {
+    return this.roster.divisionIds();
+  }
+
+  public getAgentPersona(slug: string): { name: string; division: string; persona: string } | null {
+    return this.roster.getPersona(slug);
+  }
+
+  public agentsInDivision(division: string): AgentCard[] {
+    return this.roster.getByDivision(division);
   }
 
   public getDashboard(): DashboardData {

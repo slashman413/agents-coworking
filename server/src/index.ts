@@ -96,8 +96,80 @@ async function main() {
       enabled: config.orchestration.enabled,
       agents: config.orchestration.agents || {},
       brains: config.orchestration.brains || {},
+      defaultChain: config.orchestration.defaultChain || [],
+      divisionChains: config.orchestration.divisionChains || {},
       running: dispatcher.getRunning()
     });
+  });
+
+  // ── Brain fallback chains (global default + per-division overrides) ─────────
+  app.get('/api/chains', (_req, res) => res.json({
+    defaultChain: config.orchestration.defaultChain || [],
+    divisionChains: config.orchestration.divisionChains || {}
+  }));
+
+  const validChain = (brains: any): string[] => {
+    if (!Array.isArray(brains)) throw new Error('brains (string[]) required');
+    const reg = config.orchestration.brains || {};
+    const bad = brains.filter((b: string) => !reg[b]);
+    if (bad.length) throw new Error(`unknown brain(s): ${bad.join(', ')}`);
+    return brains;
+  };
+  app.put('/api/chains/default', (req, res) => {
+    try {
+      config.orchestration.defaultChain = validChain(req.body?.brains);
+      persistRegistries(config);
+      res.json({ ok: true, defaultChain: config.orchestration.defaultChain });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+  app.put('/api/chains/division/:division', (req, res) => {
+    try {
+      config.orchestration.divisionChains = config.orchestration.divisionChains || {};
+      const brains = validChain(req.body?.brains);
+      if (brains.length) config.orchestration.divisionChains[req.params.division] = brains;
+      else delete config.orchestration.divisionChains[req.params.division];   // empty = use default
+      persistRegistries(config);
+      res.json({ ok: true, division: req.params.division, brains });
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // ── Roster grouped by division (for the Agents view) ───────────────────────
+  app.get('/api/roster-divisions', (_req, res) => {
+    const roster = store.getRoster();
+    const meta = store.getDivisions() || {};
+    const byDiv: Record<string, any> = {};
+    for (const a of roster) {
+      const d = a.division || 'other';
+      (byDiv[d] ||= { label: meta[d]?.label || d, icon: meta[d]?.icon, color: meta[d]?.color, agents: [] }).agents.push({ slug: a.slug, name: a.name, description: a.description, emoji: a.emoji });
+    }
+    res.json(byDiv);
+  });
+
+  // ── Connections: external MCP clients (heartbeat-live) + invocation counters ─
+  app.get('/api/connections', (_req, res) => {
+    const now = Date.now();
+    const clients = store.getActiveAgents()
+      .filter(a => a.sessionId !== 'dispatcher-worker' && !(a.platform === 'cowork' && a.agentName === 'orchestrator'))
+      .map(a => ({
+        id: a.id, agentName: a.agentName, platform: a.platform, status: a.status,
+        capabilities: a.capabilities || [], registeredAt: a.registeredAt, lastHeartbeat: a.lastHeartbeat,
+        live: now - new Date(a.lastHeartbeat).getTime() < 600000
+      }));
+    res.json({ clients, counters: store.getCounters() });
+  });
+
+  // ── Task artifacts (persistent per-task dir; downloadable) ─────────────────
+  const artifactsRoot = path.resolve(config.paths.reports, '..', 'artifacts');
+  app.get('/api/artifacts/:taskId', (req, res) => {
+    const dir = path.join(artifactsRoot, path.basename(req.params.taskId));
+    if (!fs.existsSync(dir)) return res.json([]);
+    res.json(fs.readdirSync(dir).filter(f => { try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; } }));
+  });
+  app.get('/api/artifacts/:taskId/:file', (req, res) => {
+    // basename() on both segments blocks path traversal.
+    const file = path.join(artifactsRoot, path.basename(req.params.taskId), path.basename(req.params.file));
+    if (!file.startsWith(artifactsRoot) || !fs.existsSync(file)) return res.status(404).json({ error: 'not found' });
+    res.download(file);
   });
 
   // ── Agents registry (worker profiles with an ordered brain chain) ──────────

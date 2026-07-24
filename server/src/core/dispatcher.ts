@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, writeFileSync, statSync } from 'node:fs';
 import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store } from './store.js';
@@ -16,14 +18,16 @@ function stripAnsi(s: string): string {
 
 /** A fully-resolved execution plan for one attempt of one task. */
 interface ExecPlan {
-  agent: string;                // agent/profile name driving the prompt ('' if none)
+  agent: string;                // special agent name or roster agent slug
+  division?: string;            // division for roster agents (chain + display)
+  isRoster: boolean;            // true → run the roster .md persona
   brainId: string;             // brain used this attempt
-  attempt: number;             // 0-based index into the agent's brain chain
-  chainLen: number;            // length of the agent's brain chain (0 if pinned)
+  attempt: number;             // 0-based index into the resolved brain chain
+  chainLen: number;            // length of the chain (0 if pinned)
   pinned: boolean;             // context.brain override (retry same brain)
   label: string;                // worker display + logs
   platform: string;             // active-agent platform bucket
-  exec: 'claude' | 'hermes' | 'agy' | 'script';
+  exec: 'claude' | 'hermes' | 'agy' | 'script' | 'codex' | 'ollama';
   model: string;
   command?: string[];
 }
@@ -90,7 +94,7 @@ export class Dispatcher {
         console.log(`Dispatcher: handover — reclaimed orphaned task ${t.id} (${t.title})`);
       }
     }
-    const agentNames = Object.keys(this.agents());
+    const agentNames = Object.keys(this.specialAgents());
     const agent = this.store.registerAgent({
       platform: 'cowork',
       agentName: Dispatcher.COORDINATOR_NAME,
@@ -111,29 +115,38 @@ export class Dispatcher {
     return Array.from(this.running.entries()).map(([taskId, r]) => ({ taskId, ...r }));
   }
 
-  /** The agent registry (with a one-time fallback to legacy `roles` so old
-   *  configs without an `agents` block still resolve). */
-  private agents(): Record<string, { description: string; brains: string[] }> {
-    const orch = this.config.orchestration;
-    if (orch.agents && Object.keys(orch.agents).length) return orch.agents;
-    // Legacy shim: synthesize agents from roles (single-brain chain via inline model).
-    const out: Record<string, { description: string; brains: string[] }> = {};
-    for (const [name, r] of Object.entries(orch.roles || {})) {
-      out[name] = { description: name, brains: r.brain ? [r.brain] : [] };
-    }
-    return out;
+  /** Special (non-roster) executor agents: orchestrator, generalist, video. */
+  private specialAgents(): Record<string, { description: string; brains: string[] }> {
+    return this.config.orchestration.agents || {};
+  }
+  private isSpecial(name: string): boolean {
+    return !!this.specialAgents()[name];
   }
 
-  /** Resolve which agent (worker profile) a task belongs to. */
+  /** Resolve the brain fallback chain for an agent. Special agents carry their
+   *  own chain; roster agents use their division's override or the global
+   *  default chain. */
+  private chainFor(agent: string, division?: string): string[] {
+    const orch = this.config.orchestration;
+    if (this.isSpecial(agent)) return orch.agents[agent].brains || [];
+    const div = division || '';
+    return (orch.divisionChains && orch.divisionChains[div]) || orch.defaultChain || [];
+  }
+
+  /** The chosen agent for a task: a special agent name, or a roster agent slug. */
   private resolveAgent(task: Task): string | null {
     if (task.tags?.includes('manual')) return null;
-    const agents = this.agents();
     const ctx = task.context || {};
     const named = typeof ctx.agent === 'string' ? ctx.agent : typeof ctx.role === 'string' ? ctx.role : undefined;
-    if (named && agents[named]) return named;
-    for (const tag of task.tags || []) if (agents[tag]) return tag;
-    if (task.skill && agents[task.skill]) return task.skill;
+    if (named && (this.isSpecial(named) || this.store.getAgentPersona(named))) return named;
+    for (const tag of task.tags || []) if (this.isSpecial(tag) || this.store.getAgentPersona(tag)) return tag;
+    if (task.skill && (this.isSpecial(task.skill) || this.store.getAgentPersona(task.skill))) return task.skill;
     return null;
+  }
+
+  /** Persistent per-task artifacts dir (survives reboot — under the repo, gitignored). */
+  private artifactsDir(taskId: string): string {
+    return join(this.config.paths.reports, '..', 'artifacts', taskId);
   }
 
   private tick(): void {
@@ -166,11 +179,38 @@ export class Dispatcher {
       const plan = this.planFor(task);
       switch (plan.action) {
         case 'skip': continue;               // manual, or unknown target
-        case 'remote': continue;             // leave in inbox for the remote client to claim
-        case 'classify': this.classify(task); continue;
+        case 'remote': this.handleRemoteRung(task, plan.exec); continue;
+        case 'route': this.route(task); continue;
         case 'execute':
           if (!this.depsSatisfied(task)) continue;
           this.execute(task, plan.exec).catch(e => console.error(`Dispatcher: task ${task.id} failed:`, e));
+      }
+    }
+  }
+
+  /** A remote brain in a chain is left pending for that machine's client to
+   *  claim — but if no client claims it within remoteGraceMs, advance to the
+   *  next brain so a clientless remote rung can't stall the task. A pinned
+   *  remote brain waits indefinitely (the CEO asked for that exact brain). */
+  private handleRemoteRung(task: Task, plan?: ExecPlan): void {
+    if (!plan || plan.pinned) return;
+    const grace = this.config.orchestration.remoteGraceMs ?? 0;
+    if (grace <= 0) return;
+    const ctx = task.context || {};
+    const since = Number(ctx.remoteWaitSince) || 0;
+    const now = Date.now();
+    if (!since) {
+      const t = this.store.getTask(task.id);
+      if (t) { t.context = { ...(t.context || {}), remoteWaitSince: now }; this.store.saveTask(t); }
+      return;
+    }
+    if (now - since > grace) {
+      const t = this.store.getTask(task.id);
+      if (t) {
+        const attempts = (Number(t.context?.attempts) || 0) + 1;
+        t.context = { ...(t.context || {}), attempts, remoteWaitSince: undefined };
+        this.store.saveTask(t);
+        console.log(`Dispatcher: remote rung ${plan.brainId} unclaimed ${grace}ms — advancing task ${task.id} to next brain`);
       }
     }
   }
@@ -185,44 +225,49 @@ export class Dispatcher {
    *      remote (leave in inbox for that client).
    *   4. nothing -> classify (LLM assigns an agent)
    */
-  private planFor(task: Task): { action: 'skip' } | { action: 'remote' } | { action: 'classify' } | { action: 'execute'; exec: ExecPlan } {
+  private planFor(task: Task): { action: 'skip' } | { action: 'remote'; exec?: ExecPlan } | { action: 'route' } | { action: 'execute'; exec: ExecPlan } {
     if (task.tags?.includes('manual')) return { action: 'skip' };
     const brains = this.config.orchestration.brains || {};
     const agentName = this.resolveAgent(task) || '';
+    const division = typeof task.context?.division === 'string' ? task.context.division
+      : (agentName && !this.isSpecial(agentName) ? this.store.getAgentPersona(agentName)?.division : undefined);
     const attempt = Number(task.context?.attempts) || 0;
 
-    // (2) explicit brain pin — overrides the agent chain, retries the same brain.
+    // (2) explicit brain pin — overrides the chain, retries the same brain.
     const ctxBrain = typeof task.context?.brain === 'string' ? task.context.brain : undefined;
     if (ctxBrain && brains[ctxBrain]) {
-      return this.brainPlan(agentName, ctxBrain, brains[ctxBrain], { pinned: true, attempt, chainLen: 0 });
+      return this.brainPlan(agentName, division, ctxBrain, brains[ctxBrain], { pinned: true, attempt, chainLen: 0 });
     }
 
-    // (3) agent brain chain.
+    // (3) an agent (special or roster) → run on its resolved brain chain.
     if (agentName) {
-      const chain = this.agents()[agentName]?.brains || [];
-      if (!chain.length) return { action: 'skip' };
-      if (attempt >= chain.length) return { action: 'skip' };   // exhausted (handover already failed it)
+      const chain = this.chainFor(agentName, division);
+      if (!chain.length || attempt >= chain.length) return { action: 'skip' };  // exhausted / misconfigured
       const brainId = chain[attempt];
       const b = brains[brainId];
-      if (!b) return { action: 'skip' };                        // misconfigured chain
-      return this.brainPlan(agentName, brainId, b, { pinned: false, attempt, chainLen: chain.length });
+      if (!b) return { action: 'skip' };
+      return this.brainPlan(agentName, division, brainId, b, { pinned: false, attempt, chainLen: chain.length });
     }
 
-    return { action: 'classify' };
+    // (4) unassigned → two-stage router picks division + roster agent.
+    return { action: 'route' };
   }
 
   private brainPlan(
-    agent: string, brainId: string, b: { location: string; exec?: string; model?: string; command?: string[] },
+    agent: string, division: string | undefined, brainId: string,
+    b: { location: string; exec?: string; model?: string; command?: string[] },
     meta: { pinned: boolean; attempt: number; chainLen: number }
-  ): { action: 'remote' } | { action: 'skip' } | { action: 'execute'; exec: ExecPlan } {
-    if (b.location === 'remote') return { action: 'remote' };   // that machine's client claims it
+  ): { action: 'remote'; exec?: ExecPlan } | { action: 'skip' } | { action: 'execute'; exec: ExecPlan } {
+    const isRoster = !!agent && !this.isSpecial(agent);
+    const label = isRoster ? `${division || '?'} / ${this.store.getAgentPersona(agent)?.name || agent} · ${brainId}` : `${agent || 'task'} · ${brainId}`;
+    const exec: ExecPlan = {
+      agent, division, isRoster, brainId, attempt: meta.attempt, chainLen: meta.chainLen, pinned: meta.pinned,
+      label, platform: this.platformOf(b.exec || 'hermes'),
+      exec: (b.exec || 'hermes') as ExecPlan['exec'], model: b.model || '', command: b.command
+    };
+    if (b.location === 'remote') return { action: 'remote', exec };   // that machine's client claims it
     if (!b.exec) return { action: 'skip' };
-    return { action: 'execute', exec: {
-      agent, brainId, attempt: meta.attempt, chainLen: meta.chainLen, pinned: meta.pinned,
-      label: `${agent || 'task'} · ${brainId}`,
-      platform: this.platformOf(b.exec),
-      exec: b.exec as ExecPlan['exec'], model: b.model || '', command: b.command
-    } };
+    return { action: 'execute', exec };
   }
 
   private platformOf(exec: string): string {
@@ -268,51 +313,98 @@ export class Dispatcher {
     }
   }
 
+  /** The brain the router LLM runs on. Prefer the classifier config (a reliable
+   *  local model dedicated to routing); otherwise the first LOCAL, runnable brain
+   *  in the orchestrator/default chain. Never a remote brain (can't spawn here). */
+  private routerModel(): { exec: string; model: string } {
+    const orch = this.config.orchestration;
+    const cls = orch.classifier;
+    if (cls?.exec) return { exec: cls.exec, model: cls.model || '' };
+    for (const id of [...(orch.agents.orchestrator?.brains || []), ...(orch.defaultChain || [])]) {
+      const b = orch.brains?.[id];
+      if (b?.location === 'local' && b.exec) return { exec: b.exec, model: b.model || '' };
+    }
+    return { exec: 'hermes', model: '' };
+  }
+  private askRouter(prompt: string, timeoutMs: number): Promise<string> {
+    const { exec, model } = this.routerModel();
+    const argv = this.buildArgv({ exec: exec as RoleConfig['exec'], model }, prompt);
+    return new Promise((resolve) => {
+      const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(out); }, timeoutMs);
+      child.stdout.on('data', d => { out += d.toString(); });
+      child.on('error', () => resolve(''));
+      child.on('close', () => { clearTimeout(timer); resolve(stripAnsi(out)); });
+    });
+  }
+
   /**
-   * LLM-driven role assignment for roleless tasks — the "dispatcher agent"
-   * (default Qwen3.6-35B-A3B, configurable via orchestration.classifier).
-   * Single-flight per task; writes context.role so the next tick dispatches
-   * it normally. Falls back to classifier.fallbackRole on any failure.
+   * Two-stage router: the orchestrator's brain picks a DIVISION from the roster,
+   * then a specific AGENT within it. Writes context.agent (roster slug) +
+   * context.division so the next tick executes it on the division's brain chain.
+   * Falls back to the `generalist` special agent on any failure.
    */
-  private classify(task: Task): void {
+  private route(task: Task): void {
     const cls = this.config.orchestration.classifier;
-    if (!cls?.enabled) return;
+    if (cls && cls.enabled === false) { this.assignAgent(task, 'generalist', undefined); return; }
     if (this.classifying.has(task.id)) return;
     this.classifying.add(task.id);
+    const timeout = cls?.timeoutMs || 180000;
+    const divisions = this.store.divisionIds();
+    const divMeta = this.store.getDivisions() || {};
 
-    const agents = this.agents();
-    const candidates = Object.entries(agents).filter(([n]) => !n.startsWith('orchestrator'));
-    const prompt =
-      `You are the DISPATCHER for a multi-agent company. Assign this task to ONE agent.\n\n` +
-      `Task title: ${task.title}\n` +
-      `Task description: ${task.description}\n\n` +
-      `Available agents:\n` +
-      candidates.map(([n, a]) => `- ${n}: ${a.description}`).join('\n') + '\n\n' +
-      `Reply with ONLY the single agent name from the list above. No other text.`;
+    (async () => {
+      try {
+        if (!divisions.length) { this.assignAgent(task, 'generalist', undefined); return; }
+        const divPrompt =
+          `You route work in a multi-agent company. Pick the ONE best division for this task.\n\n` +
+          `Task: ${task.title}\n${task.description}\n\n` +
+          `Divisions:\n` + divisions.map(d => `- ${d}: ${divMeta[d]?.label || d}`).join('\n') +
+          `\n\nReply with ONLY the division id.`;
+        const divOut = await this.askRouter(divPrompt, timeout);
+        const division = this.pickLast(divisions, divOut) || divisions[0];
 
-    const argv = this.buildArgv({ exec: cls.exec, model: cls.model }, prompt);
-    const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    const timer = setTimeout(() => child.kill('SIGTERM'), cls.timeoutMs);
-    child.stdout.on('data', d => { out += d.toString(); });
-    child.on('error', () => { /* handled in close via empty out */ });
-    child.on('close', () => {
-      clearTimeout(timer);
-      // Prefer the most specific match (longest agent name) so "engineer-local"
-      // wins over "engineer" when both appear in the output.
-      const found = Object.keys(agents)
-        .filter(r => !r.startsWith('orchestrator') && new RegExp(`\\b${r}\\b`).test(out))
-        .sort((a, b) => b.length - a.length);
-      const chosen = found.length ? found[0]
-        : (agents[cls.fallbackRole] ? cls.fallbackRole : this.config.orchestration.defaultRole);
-      const fresh = this.store.getTask(task.id);
-      if (fresh && fresh.status === 'pending') {
-        fresh.context = { ...(fresh.context || {}), role: chosen, classifiedBy: cls.model };
-        this.store.saveTask(fresh);
-        console.log(`Dispatcher: classified task ${task.id} -> ${chosen} (${cls.model}) — ${task.title}`);
+        const agentsIn = this.store.agentsInDivision(division);
+        if (!agentsIn.length) { this.assignAgent(task, 'generalist', undefined); return; }
+        const agPrompt =
+          `Pick the ONE best agent in the "${division}" division for this task.\n\n` +
+          `Task: ${task.title}\n${task.description}\n\n` +
+          `Agents (reply with the exact slug):\n` +
+          agentsIn.map(a => `- ${a.slug}: ${a.name} — ${(a.description || '').slice(0, 120)}`).join('\n') +
+          `\n\nReply with ONLY the slug.`;
+        const agOut = await this.askRouter(agPrompt, timeout);
+        const chosenSlug = this.pickLast(agentsIn.map(a => a.slug), agOut) || agentsIn[0].slug;
+        this.assignAgent(task, chosenSlug, division);
+      } catch {
+        this.assignAgent(task, 'generalist', undefined);
+      } finally {
+        this.classifying.delete(task.id);
       }
-      this.classifying.delete(task.id);
-    });
+    })();
+  }
+
+  /** Pick the candidate whose LAST mention in the text is latest — LLMs put the
+   *  final answer last, and this avoids a stray earlier mention (e.g. "not an
+   *  academic task") beating the real choice. Word-boundary, case-insensitive. */
+  private pickLast(candidates: string[], text: string): string | null {
+    let best: string | null = null, bestPos = -1;
+    for (const c of candidates) {
+      const re = new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+      let m: RegExpExecArray | null, last = -1;
+      while ((m = re.exec(text))) last = m.index;
+      if (last > bestPos) { bestPos = last; best = c; }
+    }
+    return best;
+  }
+
+  private assignAgent(task: Task, agent: string, division: string | undefined): void {
+    const fresh = this.store.getTask(task.id);
+    if (fresh && fresh.status === 'pending') {
+      fresh.context = { ...(fresh.context || {}), agent, ...(division ? { division } : {}), routedBy: this.routerModel().model };
+      this.store.saveTask(fresh);
+      console.log(`Dispatcher: routed task ${task.id} -> ${division ? division + '/' : ''}${agent}`);
+    }
   }
 
   /**
@@ -326,16 +418,20 @@ export class Dispatcher {
     return deps.every((id: string) => this.store.getTask(id)?.status === 'done');
   }
 
-  private buildPrompt(task: Task, role: string): string {
+  private buildPrompt(task: Task, plan: { agent: string; division?: string; isRoster: boolean }): string {
     const port = this.config.server.port;
-    const lines = [
-      `You are the "${role}" agent in a multi-agent company. Work autonomously and produce your final deliverable as plain text output.`,
-      ``,
-      `# Task: ${task.title}`,
-      ``,
-      task.description,
-      ``
-    ];
+    const role = plan.agent;
+    const artifactsDir = this.artifactsDir(task.id);
+    const lines: string[] = [];
+    if (plan.isRoster) {
+      // Run the roster agent's full .md persona as the system prompt.
+      const p = this.store.getAgentPersona(plan.agent);
+      lines.push(p?.persona || `You are the "${plan.agent}" specialist.`, ``, `---`, ``);
+      lines.push(`You have been assigned the following task. Work autonomously and produce your final deliverable as plain text (markdown allowed).`, ``);
+    } else {
+      lines.push(`You are the "${role}" agent in a multi-agent company. Work autonomously and produce your final deliverable as plain text output.`, ``);
+    }
+    lines.push(`# Task: ${task.title}`, ``, task.description, ``);
     if (task.context && Object.keys(task.context).length > 0) {
       lines.push(`# Context`, '```json', JSON.stringify(task.context, null, 2), '```', '');
     }
@@ -349,24 +445,24 @@ export class Dispatcher {
         }
       }
     }
-    if (role.startsWith('orchestrator')) {
+    if (role === 'orchestrator') {
       lines.push(
         `# Orchestrator instructions`,
-        `Decompose this request into concrete subtasks and dispatch them to the company via the Cowork REST API at http://localhost:${port}/api — one POST per subtask:`,
+        `Decompose this request into concrete subtasks and dispatch them to the company via the Cowork REST API — one POST per subtask. Leave the agent UNASSIGNED and the company's router will pick the best specialist from its 250-agent roster automatically (or set context.division/context.agent yourself if you know exactly who should do it):`,
         '```bash',
-        `curl -s -X POST http://localhost:${port}/api/inbox -H 'Content-Type: application/json' -d '{"title":"...","description":"...(full standalone instructions)...","from":{"platform":"claude","agent":"orchestrator"},"to":{},"priority":"normal","context":{"role":"<role>"},"tags":["<role>"]}'`,
+        `curl -s -X POST http://localhost:${port}/api/inbox -H 'Content-Type: application/json' -d '{"title":"...","description":"...(full standalone instructions)...","from":{"platform":"claude","agent":"orchestrator"},"to":{},"priority":"normal"}'`,
         '```',
-        `Available agents (assign one per subtask via context.role): ` +
-          Object.entries(this.agents()).filter(([n]) => !n.startsWith('orchestrator'))
-            .map(([n, a]) => `${n} (${a.description})`).join('; ') + '.',
-        this.brainsPromptBlock(),
-        `Each subtask description must be fully standalone — the executing agent sees ONLY that description.`,
-        `If a subtask must wait for others (e.g. a final synthesis/integration step), add their task ids to its context: {"role":"planner","dependsOn":["<id1>","<id2>"]} — the API response to each POST gives you the created task's id. Dependent tasks are held until all dependencies are done, and their results are automatically shown to the dependent agent.`,
-        `After dispatching, output a summary of the plan: which subtasks you created and why. Check existing tasks first with: curl -s http://localhost:${port}/api/inbox?limit=20`,
+        `Each subtask description must be fully standalone — the executing specialist sees ONLY that description.`,
+        `To make a subtask wait for others (e.g. a final synthesis step), add their task ids to its context: {"dependsOn":["<id1>","<id2>"]} — the API response to each POST gives the created task's id; dependencies' results are shown to the dependent agent.`,
+        `After dispatching, output a summary of the plan. Check existing tasks first: curl -s http://localhost:${port}/api/inbox?limit=20`,
         ``
       );
     }
-    lines.push(`When done, your final output (stdout) becomes the task result visible to the CEO on the dashboard.`);
+    lines.push(
+      ``,
+      `If you generate any files (reports, media, data), save them to the directory: ${artifactsDir} — they become downloadable from the dashboard when the task completes.`,
+      `When done, your final output (stdout) becomes the task result visible to the CEO on the dashboard.`
+    );
     return lines.join('\n');
   }
 
@@ -422,7 +518,11 @@ export class Dispatcher {
     this.running.set(task.id, { role: plan.label, startedAt: Date.now(), workerAgentId: worker.id });
     console.log(`Dispatcher: [${plan.label}/${plan.exec}:${plan.model || 'default'}] running task ${task.id} — ${task.title}`);
 
-    const prompt = this.buildPrompt(task, role);
+    // Persistent per-task artifacts dir (agents save files here → downloadable).
+    const artDir = this.artifactsDir(task.id);
+    try { mkdirSync(artDir, { recursive: true }); } catch { /* ignore */ }
+
+    const prompt = this.buildPrompt(task, plan);
     const argv = this.buildArgv({ exec: plan.exec, model: plan.model, command: plan.command }, prompt);
 
     const output = await new Promise<{ ok: boolean; text: string }>((resolve) => {
@@ -434,7 +534,8 @@ export class Dispatcher {
           COWORK_TASK_TITLE: task.title,
           COWORK_TASK_DESCRIPTION: task.description,
           COWORK_TASK_CONTEXT: JSON.stringify(task.context || {}),
-          COWORK_API: `http://localhost:${this.config.server.port}/api`
+          COWORK_API: `http://localhost:${this.config.server.port}/api`,
+          COWORK_ARTIFACTS_DIR: artDir
         },
         stdio: ['ignore', 'pipe', 'pipe']
       });
@@ -463,33 +564,20 @@ export class Dispatcher {
     this.running.delete(task.id);
     this.store.removeAgent(worker.id);
 
-    // Full transcript as a report; trimmed result on the task itself.
-    // Report filing must never lose the result — if it throws, complete anyway.
-    let report: { id: string; filePath: string } | null = null;
-    try {
-      report = this.store.fileReport({
-        title: `[${plan.label}] ${task.title}`,
-        type: 'task-output',
-        author_platform: plan.platform === 'pipeline' ? 'cowork' : plan.platform,
-        author_agent: plan.label,
-        content: output.text,
-        status: output.ok ? 'final' : 'draft',
-        tags: [role || plan.label, 'dispatcher', output.ok ? 'success' : 'failed']
-      });
-    } catch (e) {
-      console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
-    }
+    // Count this run: the local dispatcher ran the brain; attribute submission
+    // to whoever created the task.
+    this.store.countRun('local', plan.brainId);
+    if (task.from?.agent) this.store.countSubmitted(task.from.agent, plan.brainId);
 
-    // Handover: on failure advance to the NEXT brain in the agent's chain
-    // (or, for a pinned brain, retry it up to inbox.maxRetries). context.attempts
-    // is the chain index, so planFor picks the next brain on the requeue.
+    // Handover: on failure advance to the NEXT brain in the resolved chain
+    // (or, for a pinned brain, retry it up to inbox.maxRetries).
     const bound = plan.pinned ? this.config.inbox.maxRetries : plan.chainLen;
     if (!output.ok) {
       const fresh = this.store.getTask(task.id);
       if (fresh) {
         const nextAttempt = plan.attempt + 1;
         if (nextAttempt < bound) {
-          const nextBrain = plan.pinned ? plan.brainId : (this.agents()[plan.agent]?.brains[nextAttempt] || '?');
+          const nextBrain = plan.pinned ? plan.brainId : (this.chainFor(plan.agent, plan.division)[nextAttempt] || '?');
           fresh.status = 'pending';
           delete fresh.claimedAt;
           delete fresh.claimedBy;
@@ -502,11 +590,41 @@ export class Dispatcher {
       }
     }
 
+    // Persist a markdown copy + collect any artifacts the agent produced.
+    try { writeFileSync(join(artDir, 'result.md'), `# ${task.title}\n\n${output.text}\n`); } catch { /* ignore */ }
+    let artifacts: string[] = [];
+    try {
+      artifacts = readdirSync(artDir).filter(f => { try { return statSync(join(artDir, f)).isFile(); } catch { return false; } });
+    } catch { /* ignore */ }
+
+    // Full transcript as a report (never lose the result if filing throws).
+    let report: { id: string; filePath: string } | null = null;
+    try {
+      report = this.store.fileReport({
+        title: `[${plan.label}] ${task.title}`,
+        type: 'task-output',
+        author_platform: plan.platform === 'pipeline' ? 'cowork' : plan.platform,
+        author_agent: plan.label,
+        content: output.text,
+        status: output.ok ? 'final' : 'draft',
+        tags: [plan.agent, plan.division || '', plan.brainId, 'dispatcher', output.ok ? 'success' : 'failed'].filter(Boolean)
+      });
+    } catch (e) {
+      console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
+    }
+
     const result = output.ok
       ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in report ${report?.id ?? 'n/a'})` : output.text
       : `FAILED after ${bound} attempt(s) (chain exhausted): ${output.text.slice(0, 1000)}`;
 
+    // Record which agent/brain ran it on the task itself (item 5) + artifacts.
+    const done = this.store.getTask(task.id);
+    if (done) {
+      done.context = { ...(done.context || {}), ranAgent: plan.agent, ranDivision: plan.division, ranBrain: plan.brainId, isRoster: plan.isRoster };
+      if (artifacts.length) (done as any).artifacts = artifacts;
+      this.store.saveTask(done);
+    }
     this.store.completeTask({ taskId: task.id, result, reportPath: report?.filePath });
-    console.log(`Dispatcher: task ${task.id} ${output.ok ? 'completed' : 'FAILED (retries exhausted)'} (${output.text.length} chars)`);
+    console.log(`Dispatcher: task ${task.id} ${output.ok ? 'completed' : 'FAILED (retries exhausted)'} (${output.text.length} chars${artifacts.length ? ', ' + artifacts.length + ' artifact(s)' : ''})`);
   }
 }

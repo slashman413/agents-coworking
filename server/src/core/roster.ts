@@ -93,6 +93,25 @@ export class Roster {
     return this.divisions;
   }
 
+  /** List of division ids that actually have agents (for the two-stage router). */
+  public divisionIds(): string[] {
+    this.loadAll();
+    return [...new Set(this.agents.map(a => a.division).filter((d): d is string => !!d))].sort();
+  }
+
+  /** Full persona (frontmatter + body) of a roster agent by slug, plus its
+   *  division — injected as the system prompt when that agent runs a task. */
+  public getPersona(slug: string): { name: string; division: string; persona: string } | null {
+    this.loadAll();
+    const card = this.agents.find(a => a.slug === slug);
+    if (!card) return null;
+    try {
+      return { name: card.name, division: card.division || 'unknown', persona: fs.readFileSync(card.sourcePath, 'utf-8') };
+    } catch {
+      return null;
+    }
+  }
+
   public reload(): void {
     this.loaded = false;
     this.loadAll();

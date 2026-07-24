@@ -59,6 +59,7 @@
     "pollIntervalMs": 5000,
     "taskTimeoutMs": 1800000,
     "defaultRole": "generalist",
+    "remoteGraceMs": 60000,
     "classifier": {
       "enabled": true,
       "exec": "hermes",
@@ -67,59 +68,23 @@
       "timeoutMs": 180000
     },
     "staleClaimMs": 1800000,
+    "defaultChain": [
+      "local-ha-qwen35b",
+      "local-ha-deepseek",
+      "local-cc-opus"
+    ],
+    "divisionChains": {},
     "agents": {
       "orchestrator": {
         "description": "Decompose a CEO idea into role-tagged subtasks and dispatch them",
         "brains": [
-          "local-ha-qwen35b",
-          "local-ha-deepseek"
-        ]
-      },
-      "engineer": {
-        "description": "Write/refactor code, UI, technical implementation",
-        "brains": [
-          "local-cc-opus",
-          "local-ha-deepseek",
-          "local-ha-qwen35b"
-        ]
-      },
-      "engineer-local": {
-        "description": "Write/refactor code on a cheaper local model",
-        "brains": [
-          "local-ha-deepseek",
-          "local-ha-qwen35b"
-        ]
-      },
-      "planner": {
-        "description": "Product planning, roadmaps, breaking work into steps",
-        "brains": [
-          "local-ha-qwen35b",
-          "local-ha-deepseek"
-        ]
-      },
-      "researcher": {
-        "description": "Deep research, market/competitive analysis",
-        "brains": [
-          "local-ha-qwen27b",
-          "local-ha-qwen35b"
-        ]
-      },
-      "sales": {
-        "description": "Pricing, monetization, outreach",
-        "brains": [
-          "local-ha-qwen35b",
-          "local-ha-deepseek"
-        ]
-      },
-      "marketing": {
-        "description": "Copy, campaigns, positioning, social",
-        "brains": [
+          "remote-ai-code-gen-cc-fable",
           "local-ha-qwen35b",
           "local-ha-deepseek"
         ]
       },
       "generalist": {
-        "description": "Anything that doesn't fit another agent",
+        "description": "Fallback when the router can't classify or a roster agent fails through its chain",
         "brains": [
           "local-ha-qwen35b",
           "local-ha-deepseek"
@@ -130,32 +95,24 @@
         "brains": [
           "local-comfy-ltx"
         ]
-      },
-      "antigravity": {
-        "description": "Antigravity (AGY) agent",
-        "brains": [
-          "local-agy"
-        ]
       }
     },
     "brains": {
       "local-ha-qwen35b": {
-        "description": "Local Hermes Agent using Qwen3.6-35B-A3B (local vLLM :8000)",
+        "description": "local-ha-qwen35b (auto-registered by hermes-agent-wayne)",
         "location": "local",
         "exec": "hermes",
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4"
-      },
-      "local-ha-qwen27b": {
-        "description": "Local Hermes Agent using Qwen3.6-27B (local vLLM :8001)",
-        "location": "local",
-        "exec": "hermes",
-        "model": "nvidia/Qwen3.6-27B-NVFP4"
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "dynamic": true,
+        "registeredBy": "b27e60cf-e3ec-4a2a-8215-70759a53b33f"
       },
       "local-ha-deepseek": {
-        "description": "Local Hermes Agent using deepseek-v4-flash (cloud model)",
+        "description": "local-ha-deepseek (auto-registered by hermes-agent-wayne)",
         "location": "local",
         "exec": "hermes",
-        "model": "deepseek:deepseek-v4-flash"
+        "model": "deepseek:deepseek-v4-flash",
+        "dynamic": true,
+        "registeredBy": "b27e60cf-e3ec-4a2a-8215-70759a53b33f"
       },
       "local-cc-opus": {
         "description": "Local Claude Code using Opus 4.8",
@@ -175,12 +132,6 @@
         "exec": "claude",
         "model": "claude-fable-5"
       },
-      "local-agy": {
-        "description": "Local Antigravity (AGY) CLI, account default model",
-        "location": "local",
-        "exec": "agy",
-        "model": ""
-      },
       "local-comfy-ltx": {
         "description": "Local ComfyUI LTX video pipeline (short vertical promo)",
         "location": "local",
@@ -188,6 +139,132 @@
         "command": [
           "/home/wayne/workspace/github/slashman413/cowork/deploy/video-pipeline.sh"
         ]
+      },
+      "remote-ai-code-gen-cc-opus": {
+        "description": "remote-ai-code-gen-cc-opus (auto-registered by ai-code-gen-brains)",
+        "location": "remote",
+        "exec": "claude",
+        "model": "claude-opus-4-8",
+        "host": "ai-code-gen",
+        "dynamic": true,
+        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
+      },
+      "remote-ai-code-gen-cc-sonnet": {
+        "description": "remote-ai-code-gen-cc-sonnet (auto-registered by ai-code-gen-brains)",
+        "location": "remote",
+        "exec": "claude",
+        "model": "claude-sonnet-5",
+        "host": "ai-code-gen",
+        "dynamic": true,
+        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
+      },
+      "remote-ai-code-gen-cc-fable": {
+        "description": "remote-ai-code-gen-cc-fable (auto-registered by ai-code-gen-brains)",
+        "location": "remote",
+        "exec": "claude",
+        "model": "claude-fable-5",
+        "host": "ai-code-gen",
+        "dynamic": true,
+        "registeredBy": "c02c4ee1-a418-48d1-84d5-b1cf12b6cc28"
+      },
+      "local-agy-gemini-3.6-flash-high": {
+        "description": "local-agy-gemini-3.6-flash-high (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.6-flash-high",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.6-flash-medium": {
+        "description": "local-agy-gemini-3.6-flash-medium (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.6-flash-medium",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.6-flash-low": {
+        "description": "local-agy-gemini-3.6-flash-low (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.6-flash-low",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.5-flash-high": {
+        "description": "local-agy-gemini-3.5-flash-high (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.5-flash-high",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.5-flash-medium": {
+        "description": "local-agy-gemini-3.5-flash-medium (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.5-flash-medium",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.5-flash-low": {
+        "description": "local-agy-gemini-3.5-flash-low (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.5-flash-low",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.1-pro-high": {
+        "description": "local-agy-gemini-3.1-pro-high (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.1-pro-high",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gemini-3.1-pro-low": {
+        "description": "local-agy-gemini-3.1-pro-low (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gemini-3.1-pro-low",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-claude-sonnet-4-6": {
+        "description": "local-agy-claude-sonnet-4-6 (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "claude-sonnet-4-6",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-claude-opus-4-6-thinking": {
+        "description": "local-agy-claude-opus-4-6-thinking (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "claude-opus-4-6-thinking",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
+      },
+      "local-agy-gpt-oss-120b-medium": {
+        "description": "local-agy-gpt-oss-120b-medium (auto-registered by local)",
+        "location": "local",
+        "exec": "agy",
+        "model": "gpt-oss-120b-medium",
+        "host": "local",
+        "dynamic": true,
+        "registeredBy": "134a59cd-e6ba-458c-93db-6025a960d7b3"
       }
     }
   }

@@ -95,6 +95,9 @@ export function loadConfig(): Config {
       agents: loadedConfig.orchestration?.agents || {},
       roles: loadedConfig.orchestration?.roles || {},
       brains: loadedConfig.orchestration?.brains || {},
+      defaultChain: loadedConfig.orchestration?.defaultChain || [],
+      divisionChains: loadedConfig.orchestration?.divisionChains || {},
+      remoteGraceMs: loadedConfig.orchestration?.remoteGraceMs ?? 60000,
       classifier: {
         ...defaultConfig.orchestration.classifier!,
         ...(loadedConfig.orchestration?.classifier || {})
@@ -131,18 +134,32 @@ export function persistRegistries(config: Config): void {
   disk.orchestration = disk.orchestration || {};
   disk.orchestration.agents = config.orchestration.agents;
   disk.orchestration.brains = config.orchestration.brains;
+  disk.orchestration.defaultChain = config.orchestration.defaultChain;
+  disk.orchestration.divisionChains = config.orchestration.divisionChains;
   fs.writeFileSync(configPath, JSON.stringify(disk, null, 2));
 }
 
 /** Remove a brain from the registry AND scrub it from every agent's chain so no
  *  agent points at a brain that no longer exists. Returns #agents changed. */
 export function removeBrainCascade(config: Config, id: string): number {
-  delete (config.orchestration.brains || {})[id];
+  const orch = config.orchestration;
+  delete (orch.brains || {})[id];
   let scrubbed = 0;
-  for (const a of Object.values(config.orchestration.agents || {})) {
+  for (const a of Object.values(orch.agents || {})) {
     const before = a.brains.length;
     a.brains = a.brains.filter(b => b !== id);
     if (a.brains.length !== before) scrubbed++;
+  }
+  // Also scrub the global default chain and any division overrides.
+  if (Array.isArray(orch.defaultChain)) {
+    const before = orch.defaultChain.length;
+    orch.defaultChain = orch.defaultChain.filter(b => b !== id);
+    if (orch.defaultChain.length !== before) scrubbed++;
+  }
+  for (const [div, chain] of Object.entries(orch.divisionChains || {})) {
+    const before = chain.length;
+    const next = chain.filter(b => b !== id);
+    if (next.length !== before) { orch.divisionChains![div] = next; scrubbed++; }
   }
   persistRegistries(config);
   return scrubbed;
