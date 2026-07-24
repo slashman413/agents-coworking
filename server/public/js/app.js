@@ -359,11 +359,12 @@ class App {
           </div>
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}</span>
         </div>
+        ${arts.length ? `<div class="task-artifacts" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
+          <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Artifacts</span>
+          ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
         <div class="task-detail">
           ${mdViewer(t.description, 'DESCRIPTION')}
           ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT')}</div>` : ''}
-          ${arts.length ? `<div style="margin-top:10px"><h4 style="font-size:0.75rem;color:var(--text-muted)">ARTIFACTS</h4>
-            ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:2px 4px 2px 0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
           ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(this.agentLabel(t.claimedBy))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
         </div>
       </div>`;
