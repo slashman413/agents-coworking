@@ -69,8 +69,9 @@
     "staleClaimMs": 1800000,
     "roles": {
       "orchestrator": {
-        "exec": "claude",
-        "model": "claude-opus-4-8"
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "fallback": "orchestrator-local"
       },
       "orchestrator-fable": {
         "exec": "claude",
@@ -113,6 +114,15 @@
       "antigravity": {
         "exec": "agy",
         "model": ""
+      },
+      "orchestrator-local": {
+        "exec": "hermes",
+        "model": "deepseek:deepseek-v4-flash",
+        "fallback": "orchestrator-cloud"
+      },
+      "orchestrator-cloud": {
+        "exec": "claude",
+        "model": "claude-sonnet-5"
       }
     }
   }

@@ -245,7 +245,7 @@ export class Dispatcher {
         }
       }
     }
-    if (role === 'orchestrator') {
+    if (role.startsWith('orchestrator')) {
       lines.push(
         `# Orchestrator instructions`,
         `Decompose this request into concrete subtasks and dispatch them to the company via the Cowork REST API at http://localhost:${port}/api — one POST per subtask:`,

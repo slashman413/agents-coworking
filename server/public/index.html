@@ -1,49 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cowork MCP Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div class="app-container">
     <aside class="sidebar" id="sidebar">
       <div class="logo-area">
-        <span class="logo-icon">🚀</span>
+        <span class="logo-icon"><i data-lucide="zap"></i></span>
         <h1 class="logo-text">Cowork MCP</h1>
       </div>
       <nav class="nav-menu">
-        <a href="#dashboard" class="nav-item active" data-view="dashboard">
-          <span class="nav-icon">📊</span>
+        <a href="#dashboard" class="nav-item active" data-view="dashboard" data-label="Dashboard">
+          <span class="nav-icon"><i data-lucide="layout-dashboard"></i></span>
           <span class="nav-text">Dashboard</span>
         </a>
-        <a href="#agents" class="nav-item" data-view="agents">
-          <span class="nav-icon">🤖</span>
+        <a href="#agents" class="nav-item" data-view="agents" data-label="Active Agents">
+          <span class="nav-icon"><i data-lucide="bot"></i></span>
           <span class="nav-text">Active Agents</span>
         </a>
-        <a href="#inbox" class="nav-item" data-view="inbox">
-          <span class="nav-icon">📬</span>
+        <a href="#inbox" class="nav-item" data-view="inbox" data-label="Inbox">
+          <span class="nav-icon"><i data-lucide="inbox"></i></span>
           <span class="nav-text">Inbox</span>
         </a>
-        <a href="#reports" class="nav-item" data-view="reports">
-          <span class="nav-icon">📄</span>
+        <a href="#reports" class="nav-item" data-view="reports" data-label="Reports">
+          <span class="nav-icon"><i data-lucide="file-text"></i></span>
           <span class="nav-text">Reports</span>
         </a>
-        <a href="#roster" class="nav-item" data-view="roster">
-          <span class="nav-icon">👥</span>
+        <a href="#roster" class="nav-item" data-view="roster" data-label="Agent Roster">
+          <span class="nav-icon"><i data-lucide="users-round"></i></span>
           <span class="nav-text">Agent Roster</span>
         </a>
-        <a href="#config" class="nav-item" data-view="config">
-          <span class="nav-icon">⚙️</span>
+        <a href="#config" class="nav-item" data-view="config" data-label="Configuration">
+          <span class="nav-icon"><i data-lucide="settings"></i></span>
           <span class="nav-text">Configuration</span>
         </a>
       </nav>
       <div class="sidebar-footer">
-        <p>Cowork Server v1.0.0</p>
+        <span class="version-dot"></span>
+        <span class="version-text">Cowork Server v1.0.0</span>
       </div>
     </aside>
 
@@ -53,8 +54,11 @@
         <div class="header-actions">
           <div id="connection-status" class="status-indicator">
             <div class="dot connecting"></div>
-            <span>Connecting...</span>
+            <span>Connecting…</span>
           </div>
+          <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <i data-lucide="moon"></i>
+          </button>
         </div>
       </header>
 
@@ -65,14 +69,15 @@
   </div>
 
   <div id="toast-container" class="toast-container"></div>
-  
+
   <div id="modal-container" class="modal-container hidden">
     <div class="modal-backdrop"></div>
-    <div class="modal-content glass-effect" id="modal-content">
+    <div class="modal-content" id="modal-content">
       <!-- Modal rendered here -->
     </div>
   </div>
 
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
   <script src="js/utils/api.js"></script>
   <script src="js/utils/sse.js"></script>
   <script src="js/app.js"></script>
