@@ -121,7 +121,13 @@ export class Roster {
     const card = this.agents.find(a => a.slug === slug);
     if (!card) return null;
     try {
-      return { name: card.name, division: card.division || 'unknown', persona: fs.readFileSync(card.sourcePath, 'utf-8') };
+      // Strip the YAML frontmatter — the markdown BODY is the actual persona/system
+      // prompt. The raw `---` header would otherwise start the prompt and get parsed
+      // as a CLI option (`unknown option '--- name: …'`) by positional-arg execs.
+      const raw = fs.readFileSync(card.sourcePath, 'utf-8');
+      const body = matter(raw).content.trim();
+      const persona = body || `You are ${card.name}. ${card.description}`.trim();
+      return { name: card.name, division: card.division || 'unknown', persona };
     } catch {
       return null;
     }

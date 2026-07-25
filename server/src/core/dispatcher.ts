@@ -487,8 +487,9 @@ export class Dispatcher {
       case 'agy':
         return ['agy', '-p', prompt];
       case 'codex':
-        // OpenAI Codex CLI, non-interactive.
-        return ['codex', 'exec', ...(roleCfg.model ? ['-m', roleCfg.model] : []), prompt];
+        // OpenAI Codex CLI, non-interactive. `--` ends option parsing so a prompt
+        // that happens to start with a dash isn't mistaken for a flag.
+        return ['codex', 'exec', ...(roleCfg.model ? ['-m', roleCfg.model] : []), '--', prompt];
       case 'ollama':
         // Local Ollama chat model (model required).
         if (!roleCfg.model) throw new Error('exec:ollama needs a model');
