@@ -509,7 +509,7 @@ export class Dispatcher {
     const role = plan.agent;
     if (!this.agentId) return;
 
-    const claimed = this.store.claimTask({ taskId: task.id, agentId: this.agentId });
+    const claimed = this.store.claimTask({ taskId: task.id, agentId: this.agentId, internal: true });
     if (!claimed) return;
     // Mark the claim as dispatcher-owned so startup handover can reclaim it
     claimed.context = { ...(claimed.context || {}), dispatched: true };

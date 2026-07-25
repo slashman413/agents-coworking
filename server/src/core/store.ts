@@ -159,9 +159,18 @@ export class Store {
     return task;
   }
 
-  public claimTask(params: { taskId: string; agentId: string }): Task | null {
+  public claimTask(params: { taskId: string; agentId: string; internal?: boolean }): Task | null {
     const task = this.getTask(params.taskId);
     if (!task) return null;
+    // A LOCAL-brain task is the dispatcher's to run (it spawns the CLI directly and
+    // injects the roster persona). External clients must not claim it — otherwise a
+    // client that registered a local brain races the dispatcher and runs the task
+    // WITHOUT the persona/ran-labels. Only internal (dispatcher) claims are allowed.
+    if (!params.internal) {
+      const brainId = task.context?.brain;
+      const brain = brainId ? this.config.orchestration.brains?.[brainId] : undefined;
+      if (brain && brain.location === 'local') return null;
+    }
     // Atomic compare-and-set: only a pending task can be claimed. The server is
     // single-process, so claimTask runs to completion without interleaving —
     // this makes concurrent claims (many remote clients on one brain) safe:
