@@ -61,6 +61,28 @@ export class Workflows {
   }
 
   /**
+   * The templates on disk that FAILED to load, with the reason — the mirror of
+   * list(). Without this an author who drops malformed JSON just sees it vanish;
+   * the dashboard renders these so the fix is one glance away.
+   */
+  listInvalid(): { file: string; id?: string; errors: string[] }[] {
+    const dir = this.dir();
+    if (!fs.existsSync(dir)) return [];
+    const out: { file: string; id?: string; errors: string[] }[] = [];
+    for (const file of globSync('*.json', { cwd: dir })) {
+      try {
+        const def = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')) as WorkflowDef;
+        if (!def.id) def.id = path.basename(file, '.json');
+        const errors = this.validate(def);
+        if (errors.length) out.push({ file, id: def.id, errors });
+      } catch (e: any) {
+        out.push({ file, errors: [`invalid JSON: ${e.message}`] });
+      }
+    }
+    return out.sort((a, b) => a.file.localeCompare(b.file));
+  }
+
+  /**
    * Structural validation. Returns a list of human-readable errors ([] = valid):
    * required fields, unique step keys, dependsOn references an existing key, and
    * — critically — the graph is acyclic (a cycle would deadlock depsSatisfied

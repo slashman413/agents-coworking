@@ -582,8 +582,18 @@ class App {
   }
 
   async renderWorkflows() {
-    const [defs, runs] = await Promise.all([this.api.get('/workflows'), this.api.get('/workflow-runs')]);
+    const [defs, runs, invalid] = await Promise.all([
+      this.api.get('/workflows'), this.api.get('/workflow-runs'),
+      this.api.get('/workflows-invalid').catch(() => [])
+    ]);
     const inp = 'padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem';
+
+    // Surface templates that failed to load so an author gets the reason instead
+    // of a silently-missing card.
+    const invalidCard = (invalid && invalid.length) ? `<div class="card" style="border-color:#EF444466;margin-bottom:var(--space-lg)">
+      <div style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:#EF4444"><i data-lucide="alert-triangle" style="width:15px;height:15px"></i><strong>${invalid.length} template${invalid.length > 1 ? 's' : ''} failed to load</strong></div>
+      ${invalid.map(iv => `<div style="font-size:0.78rem;margin-top:6px"><code>${esc(iv.file)}</code><ul style="margin:2px 0 0 16px;color:var(--text-secondary)">${iv.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`).join('')}
+    </div>` : '';
 
     const tplCards = defs.length ? defs.map(def => {
       const nodes = def.steps.map(s => ({
@@ -628,6 +638,7 @@ class App {
 
     this.contentEl.innerHTML = `
       <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:var(--space-md)">A workflow template compiles into a DAG of inbox tasks wired by <code>dependsOn</code>; the dispatcher walks them in dependency order. Runs are deterministic and reusable — no LLM re-planning. Run one below, then watch its nodes light up as tasks complete.</p>
+      ${invalidCard}
       <h3 style="font-size:0.9rem;margin:var(--space-md) 0 6px">Templates</h3>${tplCards}
       <h3 style="font-size:0.9rem;margin:var(--space-xl) 0 6px">Runs <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(click a node to see its output)</span></h3>${runCards}`;
 

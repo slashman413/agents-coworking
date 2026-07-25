@@ -410,8 +410,13 @@ Every task a run creates carries `context.workflowId`, `context.workflowRunId`,
 and `context.stepKey` so the **Workflows** tab in the dashboard can group a run
 and render its DAG with per-node live status. Templates are validated on load
 (unique keys, deps exist, and the graph is **acyclic** — a cycle would deadlock
-`dependsOn` forever). Steps can pin an `agent`, `division`, or `brain`, or leave
-them off and let the router pick.
+`dependsOn` forever); a template that fails validation is skipped rather than
+crashing the list, and the reason is surfaced in the dashboard (and at
+`GET /api/workflows-invalid`) so a malformed template is easy to fix. Steps can
+pin an `agent`, `division`, or `brain`, or leave them off and let the router pick.
+
+The engine (validation, cycle detection, topological expansion, DAG wiring, and
+run reconstruction) is covered by a test suite — `cd server && npm test`.
 
 ## REST API
 
@@ -426,6 +431,7 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `POST` | `/api/inbox` | Create a new task |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
 | `GET` | `/api/workflows` / `/api/workflows/:id` | Declarative workflow templates (validated) |
+| `GET` | `/api/workflows-invalid` | Templates that failed to load, with the reason (JSON/validation errors) |
 | `POST` | `/api/workflows/:id/run` | Expand a template into DAG tasks; `{ params, dryRun }` |
 | `GET` | `/api/workflow-runs` / `/api/workflow-runs/:runId` | Runs grouped from task context (for the run view) |
 | `GET` | `/api/reports` / `/api/reports/:id` | Reports list / full content |

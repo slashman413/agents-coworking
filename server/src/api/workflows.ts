@@ -4,6 +4,7 @@ import type { Workflows } from '../core/workflows.js';
 /**
  * REST surface for the declarative workflow layer.
  *   GET  /workflows                 — list templates (validated)
+ *   GET  /workflows-invalid         — templates that failed to load, with reasons
  *   GET  /workflows/:id             — one template
  *   POST /workflows/:id/run         — expand into tasks; { params, dryRun }
  *   GET  /workflow-runs             — every run, grouped from task context
@@ -14,6 +15,10 @@ export function createWorkflowRouter(workflows: Workflows): Router {
 
   router.get('/workflows', (_req, res) => {
     res.json(workflows.list());
+  });
+
+  router.get('/workflows-invalid', (_req, res) => {
+    res.json(workflows.listInvalid());
   });
 
   router.get('/workflows/:id', (req, res) => {
