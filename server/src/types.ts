@@ -119,6 +119,8 @@ export interface Config {
     reports: string;
     status: string;
     decisions: string;
+    /** Dir of declarative workflow templates (workflows/*.json). */
+    workflows: string;
   };
   platforms: Record<string, PlatformConfig>;
   services: Record<string, ServiceConfig>;
@@ -218,6 +220,54 @@ export interface CoworkEventPayloads {
   taskCompleted: { task: Task };
   reportFiled: { report: Report };
   heartbeat: { agentId: string; status: string; currentTask?: string };
+}
+
+/**
+ * One node of a declarative workflow: a task template. `key` is a stable,
+ * template-local id used to wire `dependsOn` edges (resolved to real task ids at
+ * expansion time). Exactly the fields a task needs, minus the runtime plumbing.
+ */
+export interface WorkflowStep {
+  /** Unique-within-the-workflow node id. Referenced by other steps' dependsOn. */
+  key: string;
+  /** Task title. `{{param}}` placeholders are filled from run params. */
+  title?: string;
+  /** Task description (the standalone brief the executing agent sees). */
+  description?: string;
+  /** Pin a specific roster/special agent (context.agent). Omit to let the router pick. */
+  agent?: string;
+  /** Pin a division (context.division) so the router only chooses within it. */
+  division?: string;
+  /** Pin an exact brain (context.brain). */
+  brain?: string;
+  priority?: 'low' | 'normal' | 'high' | 'urgent';
+  /** Step keys (NOT task ids) this step waits for — the DAG edges. */
+  dependsOn?: string[];
+}
+
+/**
+ * A reusable, version-controlled pipeline. Loaded from workflows/<id>.json and
+ * expanded on demand into a DAG of inbox tasks the dispatcher already knows how
+ * to walk (via context.dependsOn). Deterministic: same template + same params →
+ * same shape every run.
+ */
+export interface WorkflowDef {
+  id: string;
+  /** Human label + one-liner shown in the UI. */
+  name?: string;
+  description?: string;
+  /** Named params required at run time; referenced as {{name}} in steps. */
+  params?: string[];
+  steps: WorkflowStep[];
+}
+
+/** A live/finished run: the tasks one expansion produced, grouped for the UI. */
+export interface WorkflowRun {
+  runId: string;
+  workflowId: string;
+  createdAt: string;
+  tasks: Task[];
+  status: 'running' | 'done' | 'failed';
 }
 
 export type CoworkEventType = keyof CoworkEventPayloads;

@@ -191,7 +191,7 @@ class App {
     });
     const titles = {
       dashboard: 'Dashboard', chat: 'Chat', connections: 'Connections', inbox: 'Task Inbox',
-      reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
+      workflows: 'Workflows', reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
     this.renderCurrentView();
@@ -203,6 +203,7 @@ class App {
         case 'chat': await this.renderChat(); break;
         case 'connections': await this.renderConnections(); break;
         case 'inbox': await this.renderInbox(); break;
+        case 'workflows': await this.renderWorkflows(); break;
         case 'reports': await this.renderReports(); break;
         case 'team': await this.renderTeam(); break;
         case 'brains': await this.renderBrains(); break;
@@ -541,6 +542,127 @@ class App {
     });
     const note = this.contentEl.querySelector('#inbox-nomatch');
     if (note) note.style.display = (q && shown === 0 && cards.length) ? '' : 'none';
+  }
+
+  // ── Workflows (declarative DAG templates + live runs) ──────────────────
+
+  // Group nodes into topological layers so the DAG renders top→bottom with each
+  // node below everything it depends on. Nodes: {key, dependsOn:[key,…]}.
+  _dagLayers(nodes) {
+    const byKey = new Map(nodes.map(n => [n.key, n]));
+    const depth = new Map();
+    const visit = (k, stack) => {
+      if (depth.has(k)) return depth.get(k);
+      if (stack.has(k)) return 0;                 // cycle guard (server rejects these)
+      stack.add(k);
+      const deps = (byKey.get(k)?.dependsOn || []).filter(d => byKey.has(d));
+      const v = deps.length ? 1 + Math.max(...deps.map(d => visit(d, stack))) : 0;
+      stack.delete(k);
+      depth.set(k, v);
+      return v;
+    };
+    nodes.forEach(n => visit(n.key, new Set()));
+    const layers = [];
+    nodes.forEach(n => { const l = depth.get(n.key) || 0; (layers[l] ||= []).push(n); });
+    return layers;
+  }
+
+  _dagNode(n) {
+    const color = n.status ? (STATUS_COLORS[n.status] || '#94A3B8') : '#7C3AED';
+    return `<div class="wf-node"${n.taskId ? ` data-wf-task="${esc(n.taskId)}" style="cursor:pointer;border-color:${color}66"` : ` style="border-color:${color}66"`}>
+      <div class="wf-node-top"><span class="wf-dot" style="background:${color}"></span><strong>${esc(n.label)}</strong>${n.status ? badge(n.status, color) : ''}</div>
+      ${n.sub ? `<div class="wf-node-sub">${esc(n.sub)}</div>` : ''}
+    </div>`;
+  }
+
+  _dagHtml(nodes) {
+    return this._dagLayers(nodes).map((layer, i) =>
+      `${i > 0 ? '<div class="wf-arrow"><i data-lucide="chevron-down"></i></div>' : ''}<div class="wf-layer">${layer.map(n => this._dagNode(n)).join('')}</div>`
+    ).join('');
+  }
+
+  async renderWorkflows() {
+    const [defs, runs] = await Promise.all([this.api.get('/workflows'), this.api.get('/workflow-runs')]);
+    const inp = 'padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem';
+
+    const tplCards = defs.length ? defs.map(def => {
+      const nodes = def.steps.map(s => ({
+        key: s.key, label: s.title || s.key, dependsOn: s.dependsOn || [],
+        sub: [s.agent && ('@' + s.agent), s.division && ('#' + s.division), s.brain && ('🧠 ' + s.brain)].filter(Boolean).join(' · ')
+      }));
+      const params = (def.params || []).map(p => `<input data-param="${esc(p)}" placeholder="${esc(p)}…" style="${inp}">`).join('');
+      return `<div class="card wf-card" data-wf="${esc(def.id)}" style="margin-bottom:var(--space-lg)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div><strong>${esc(def.name || def.id)}</strong> ${badge(def.id, '#7C3AED')}</div>
+          <span style="font-size:0.75rem;color:var(--text-muted)">${def.steps.length} steps</span>
+        </div>
+        ${def.description ? `<p style="font-size:0.83rem;color:var(--text-secondary);margin:6px 0">${esc(def.description)}</p>` : ''}
+        <div class="wf-dag">${this._dagHtml(nodes)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px">
+          ${params || '<span style="font-size:0.78rem;color:var(--text-muted)">no params</span>'}
+          <button class="btn wf-dry" style="font-size:0.78rem;margin-left:auto">Dry run</button>
+          <button class="btn btn-primary wf-run" style="font-size:0.78rem">Run ▶</button>
+        </div>
+        <div class="wf-dry-out" style="display:none;margin-top:10px"></div>
+      </div>`;
+    }).join('') : `<div class="empty-state"><div class="empty-state-icon"><i data-lucide="workflow"></i></div><h3>No workflow templates</h3><p>Drop a <code>workflows/*.json</code> template on the server to see it here.</p></div>`;
+
+    const runCards = runs.length ? runs.map(r => {
+      const idToStep = {};
+      r.tasks.forEach(t => { idToStep[t.id] = t.context?.stepKey || t.id.slice(0, 6); });
+      const nodes = r.tasks.map(t => ({
+        key: t.context?.stepKey || t.id, label: t.context?.stepKey || t.title, sub: esc(t.title), status: t.status, taskId: t.id,
+        dependsOn: (t.context?.dependsOn || []).map(id => idToStep[id]).filter(Boolean)
+      }));
+      const color = r.status === 'done' ? '#22C55E' : r.status === 'failed' ? '#EF4444' : '#0EA5E9';
+      const done = r.tasks.filter(t => t.status === 'done').length;
+      return `<div class="card" style="margin-bottom:var(--space-md)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div>${badge(r.workflowId, '#7C3AED')} ${badge(r.status, color)}</div>
+          <span style="font-size:0.75rem;color:var(--text-muted)">${esc(r.runId)} · ${done}/${r.tasks.length} done · ${timeAgo(r.createdAt)}</span>
+        </div>
+        <div class="wf-dag">${this._dagHtml(nodes)}</div>
+        <div class="wf-run-detail" style="display:none;margin-top:10px"></div>
+      </div>`;
+    }).join('') : '<div style="color:var(--text-muted);font-size:0.85rem">No runs yet — run a template above and its nodes will light up as tasks complete.</div>';
+
+    this.contentEl.innerHTML = `
+      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:var(--space-md)">A workflow template compiles into a DAG of inbox tasks wired by <code>dependsOn</code>; the dispatcher walks them in dependency order. Runs are deterministic and reusable — no LLM re-planning. Run one below, then watch its nodes light up as tasks complete.</p>
+      <h3 style="font-size:0.9rem;margin:var(--space-md) 0 6px">Templates</h3>${tplCards}
+      <h3 style="font-size:0.9rem;margin:var(--space-xl) 0 6px">Runs <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(click a node to see its output)</span></h3>${runCards}`;
+
+    this.contentEl.querySelectorAll('.wf-card').forEach(card => {
+      const id = card.dataset.wf;
+      const readParams = () => { const p = {}; card.querySelectorAll('[data-param]').forEach(i => { p[i.dataset.param] = i.value.trim(); }); return p; };
+      card.querySelector('.wf-run')?.addEventListener('click', async () => {
+        try {
+          const r = await this.api.post(`/workflows/${encodeURIComponent(id)}/run`, { params: readParams() });
+          this.toast('workflow started', `${id} · ${r.tasks.length} tasks`);
+          this.renderWorkflows();
+        } catch (e) { this.toast('error', e.message); }
+      });
+      card.querySelector('.wf-dry')?.addEventListener('click', async () => {
+        const out = card.querySelector('.wf-dry-out');
+        try {
+          const r = await this.api.post(`/workflows/${encodeURIComponent(id)}/run`, { params: readParams(), dryRun: true });
+          const nodes = r.steps.map(s => ({ key: s.key, label: s.title || s.key, dependsOn: s.dependsOn || [], sub: [s.agent && ('@' + s.agent), s.division && ('#' + s.division)].filter(Boolean).join(' · ') }));
+          out.innerHTML = `<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px">Dry run — nothing was created. Resolved plan (${nodes.length} steps):</div><div class="wf-dag">${this._dagHtml(nodes)}</div>`;
+          out.style.display = 'block'; createIcons();
+        } catch (e) { out.innerHTML = `<span style="color:#EF4444;font-size:0.8rem">${esc(e.message)}</span>`; out.style.display = 'block'; }
+      });
+    });
+
+    this.contentEl.querySelectorAll('[data-wf-task]').forEach(node => node.addEventListener('click', async () => {
+      const detail = node.closest('.card').querySelector('.wf-run-detail');
+      if (!detail) return;
+      detail.style.display = 'block';
+      detail.innerHTML = '<span style="opacity:.6;font-size:0.82rem">loading…</span>';
+      try {
+        const t = await this.api.get(`/inbox/${encodeURIComponent(node.dataset.wfTask)}`);
+        detail.innerHTML = `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:4px">${badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')} <strong>${esc(t.title)}</strong></div>${mdViewer(t.result || t.description || '(no output yet)', 'OUTPUT')}`;
+        createIcons();
+      } catch (e) { detail.innerHTML = `<span style="color:#EF4444;font-size:0.8rem">${esc(e.message)}</span>`; }
+    }));
   }
 
   // ── Reports ────────────────────────────────────────────────────────────

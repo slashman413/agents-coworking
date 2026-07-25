@@ -7,7 +7,9 @@ import { Store } from './core/store.js';
 import { Dispatcher } from './core/dispatcher.js';
 import { createMcpServer } from './mcp/server.js';
 import { createApiRouter } from './api/router.js';
+import { createWorkflowRouter } from './api/workflows.js';
 import { createSSEHandler } from './api/sse.js';
+import { Workflows } from './core/workflows.js';
 
 async function main() {
   const config = loadConfig();
@@ -44,6 +46,13 @@ async function main() {
   // REST API
   const apiRouter = createApiRouter(store, eventBus);
   app.use('/api', apiRouter);
+
+  // Declarative workflows: templates in paths.workflows compiled into DAG tasks.
+  if (!fs.existsSync(config.paths.workflows)) {
+    try { fs.mkdirSync(config.paths.workflows, { recursive: true }); } catch { /* ignore */ }
+  }
+  const workflows = new Workflows(config, store);
+  app.use('/api', createWorkflowRouter(workflows));
 
   // MCP Server
   const mcpServer = createMcpServer(config, store, eventBus);

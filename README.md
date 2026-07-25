@@ -374,6 +374,45 @@ AGY Agent calls:
 
 ---
 
+## Workflows — declarative, reusable pipelines
+
+A **workflow** is a version-controlled template (`workflows/<id>.json`) that
+compiles into a DAG of inbox tasks — the same `context.dependsOn` edges the
+dispatcher already walks. No new execution engine: expansion just pre-wires the
+tasks the dispatcher runs anyway. The win is that a multi-step job becomes
+**deterministic, reusable, and inspectable** instead of an LLM re-planning from
+scratch every time.
+
+A template is a list of steps; each step is a task with a stable `key` that other
+steps reference in `dependsOn` (resolved to real task ids at run time):
+
+```json
+{
+  "id": "content-pipeline",
+  "params": ["topic"],
+  "steps": [
+    { "key": "research", "title": "Research: {{topic}}", "division": "marketing" },
+    { "key": "draft",    "title": "Draft {{topic}}", "division": "marketing", "dependsOn": ["research"] },
+    { "key": "review",   "title": "Review {{topic}}", "agent": "code-reviewer", "dependsOn": ["draft"] },
+    { "key": "publish",  "title": "Publish {{topic}}", "division": "marketing", "dependsOn": ["review"] }
+  ]
+}
+```
+
+Run it (or **dry-run** to inspect the resolved plan without creating anything):
+
+```bash
+curl -s -X POST localhost:6868/api/workflows/content-pipeline/run \
+  -H 'content-type: application/json' -d '{"params":{"topic":"RISC-V laptops"}}'
+```
+
+Every task a run creates carries `context.workflowId`, `context.workflowRunId`,
+and `context.stepKey` so the **Workflows** tab in the dashboard can group a run
+and render its DAG with per-node live status. Templates are validated on load
+(unique keys, deps exist, and the graph is **acyclic** — a cycle would deadlock
+`dependsOn` forever). Steps can pin an `agent`, `division`, or `brain`, or leave
+them off and let the router pick.
+
 ## REST API
 
 The Web UI uses these endpoints (also available for scripts/integrations):
@@ -386,6 +425,9 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | `POST` | `/api/inbox` | Create a new task |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
+| `GET` | `/api/workflows` / `/api/workflows/:id` | Declarative workflow templates (validated) |
+| `POST` | `/api/workflows/:id/run` | Expand a template into DAG tasks; `{ params, dryRun }` |
+| `GET` | `/api/workflow-runs` / `/api/workflow-runs/:runId` | Runs grouped from task context (for the run view) |
 | `GET` | `/api/reports` / `/api/reports/:id` | Reports list / full content |
 | `GET` | `/api/roster?division=engineering` | Agent roster (filterable) |
 | `GET` | `/api/roster-divisions` | Roster grouped by division (for the Agents view) |
@@ -408,6 +450,7 @@ cowork/
 ├── PROTOCOL.md              # Protocol specification
 ├── JOIN-AS-A-BRAIN.md       # Onboarding for a remote brain client
 ├── agency-agents/           # git SUBMODULE — the ~285-agent roster
+├── workflows/               # Declarative workflow templates (*.json DAGs)
 ├── server/                  # MCP Server + Web UI
 │   ├── src/                 # TypeScript source
 │   └── public/              # Web UI (HTML/CSS/JS)

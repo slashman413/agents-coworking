@@ -49,7 +49,8 @@ const defaultConfig: Config = {
     inbox: './inbox',
     reports: './reports',
     status: './.status',
-    decisions: './decisions'
+    decisions: './decisions',
+    workflows: './workflows'
   },
   platforms: {},
   services: {},

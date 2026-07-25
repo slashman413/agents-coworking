@@ -1,0 +1,35 @@
+{
+  "id": "content-pipeline",
+  "name": "Content Pipeline",
+  "description": "Research a topic, draft an article, review it, then publish — a linear 4-stage fan-through that shows dependsOn wiring.",
+  "params": ["topic"],
+  "steps": [
+    {
+      "key": "research",
+      "title": "Research: {{topic}}",
+      "description": "Research the topic \"{{topic}}\". Produce 5-8 key findings with sources, the current state of the art, and 3 angles worth writing about. Output as markdown.",
+      "division": "marketing"
+    },
+    {
+      "key": "draft",
+      "title": "Draft an article on {{topic}}",
+      "description": "Using the research provided, write a 600-900 word article on \"{{topic}}\". Clear structure, engaging intro, concrete takeaways. Output the full article as markdown.",
+      "division": "marketing",
+      "dependsOn": ["research"]
+    },
+    {
+      "key": "review",
+      "title": "Review the {{topic}} draft",
+      "description": "Review the drafted article for accuracy, clarity, and tone. List concrete edits, then output the corrected final article.",
+      "agent": "code-reviewer",
+      "dependsOn": ["draft"]
+    },
+    {
+      "key": "publish",
+      "title": "Prepare {{topic}} for publishing",
+      "description": "Take the reviewed final article and prepare it for publishing: write an SEO title, meta description, 5 tags, and a 2-sentence social blurb. Output everything as markdown.",
+      "division": "marketing",
+      "dependsOn": ["review"]
+    }
+  ]
+}
