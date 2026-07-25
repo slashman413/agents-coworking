@@ -9,3 +9,4 @@ decisions/*.md
 server/hermes-*.md
 docs/backlink-*.md
 artifacts/
+workflow-runs/

@@ -97,8 +97,9 @@ async function main() {
     store.removeStaleAgents(600000);
   }, 300000);
 
-  // Dispatcher: executes role-tagged inbox tasks by spawning platform CLIs
-  const dispatcher = new Dispatcher(config, store, eventBus);
+  // Dispatcher: executes role-tagged inbox tasks by spawning platform CLIs, and
+  // drives orchestrated workflow runs (decides each next step via the router brain).
+  const dispatcher = new Dispatcher(config, store, eventBus, workflows);
   dispatcher.start();
   app.get('/api/dispatcher', (_req, res) => {
     res.json({

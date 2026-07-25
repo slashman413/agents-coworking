@@ -581,6 +581,52 @@ class App {
     ).join('');
   }
 
+  // Orchestrated templates have no fixed graph — the steps are a LIBRARY the
+  // orchestrator picks from at runtime. Render them as an unconnected candidate
+  // pool so it's visually clear the path isn't predetermined.
+  _stepLibraryHtml(nodes) {
+    return `<div class="wf-layer" style="justify-content:flex-start">${nodes.map(n => this._dagNode(n)).join('')}</div>`;
+  }
+
+  // An orchestrated run's decision log: the ordered steps the orchestrator chose
+  // (each with its rationale + the task's status), then a terminal node — either
+  // "goal met", or a live "deciding…" pulse while the orchestrator is thinking.
+  _orchestratedRunHtml(r) {
+    const byId = {};
+    r.tasks.forEach(t => { byId[t.id] = t; });
+    const picks = (r.history || []).filter(h => h.stepKey);
+    const doneEntry = (r.history || []).find(h => h.stepKey === null);
+    const openTask = r.tasks.some(t => t.status !== 'done' && t.status !== 'rejected');
+
+    const rows = picks.map((h, i) => {
+      const t = h.taskId ? byId[h.taskId] : null;
+      const status = t?.status || 'pending';
+      const color = STATUS_COLORS[status] || '#94A3B8';
+      return `${i > 0 ? '<div class="wf-arrow"><i data-lucide="chevron-down"></i></div>' : ''}
+        <div class="wf-node"${t ? ` data-wf-task="${esc(t.id)}" style="cursor:pointer;border-color:${color}66"` : ` style="border-color:${color}66"`}>
+          <div class="wf-node-top"><span class="wf-dot" style="background:${color}"></span><strong>${i + 1}. ${esc(h.stepKey)}</strong>${badge(status, color)}</div>
+          ${t?.title ? `<div class="wf-node-sub">${esc(t.title)}</div>` : ''}
+          ${h.reason ? `<div class="wf-node-sub" style="font-style:italic;opacity:.75">🧠 ${esc(h.reason)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    let terminal = '';
+    if (doneEntry) {
+      const ok = r.status !== 'failed';
+      terminal = `<div class="wf-arrow"><i data-lucide="chevron-down"></i></div>
+        <div class="wf-node" style="border-color:${ok ? '#22C55E' : '#EF4444'}66">
+          <div class="wf-node-top"><span class="wf-dot" style="background:${ok ? '#22C55E' : '#EF4444'}"></span><strong>${ok ? '✓ goal met' : '✕ run failed'}</strong></div>
+          ${doneEntry.reason ? `<div class="wf-node-sub" style="font-style:italic;opacity:.75">🧠 ${esc(doneEntry.reason)}</div>` : ''}
+        </div>`;
+    } else if (r.status === 'running' && !openTask) {
+      terminal = `<div class="wf-arrow"><i data-lucide="chevron-down"></i></div>
+        <div class="wf-node wf-deciding" style="border-color:#0EA5E966">
+          <div class="wf-node-top"><span class="wf-dot" style="background:#0EA5E9"></span><strong>🧠 orchestrator deciding next step…</strong></div>
+        </div>`;
+    }
+    return `<div class="wf-dag">${rows || '<div style="font-size:0.8rem;color:var(--text-muted)">Waiting for the orchestrator to pick the first step…</div>'}${terminal}</div>`;
+  }
+
   async renderWorkflows() {
     const [defs, runs, invalid] = await Promise.all([
       this.api.get('/workflows'), this.api.get('/workflow-runs'),
@@ -595,19 +641,28 @@ class App {
       ${invalid.map(iv => `<div style="font-size:0.78rem;margin-top:6px"><code>${esc(iv.file)}</code><ul style="margin:2px 0 0 16px;color:var(--text-secondary)">${iv.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`).join('')}
     </div>` : '';
 
+    const modeBadge = (m) => m === 'orchestrated'
+      ? badge('adaptive · orchestrator-driven', '#0EA5E9')
+      : badge('DAG · static', '#7C3AED');
+
     const tplCards = defs.length ? defs.map(def => {
+      const orchestrated = def.mode === 'orchestrated';
       const nodes = def.steps.map(s => ({
         key: s.key, label: s.title || s.key, dependsOn: s.dependsOn || [],
         sub: [s.agent && ('@' + s.agent), s.division && ('#' + s.division), s.brain && ('🧠 ' + s.brain)].filter(Boolean).join(' · ')
       }));
       const params = (def.params || []).map(p => `<input data-param="${esc(p)}" placeholder="${esc(p)}…" style="${inp}">`).join('');
+      const graph = orchestrated
+        ? `<div style="font-size:0.72rem;color:var(--text-muted);margin:6px 0 4px">Step library — the orchestrator picks from these at runtime (order not fixed):</div>${this._stepLibraryHtml(nodes)}`
+        : `<div class="wf-dag">${this._dagHtml(nodes)}</div>`;
       return `<div class="card wf-card" data-wf="${esc(def.id)}" style="margin-bottom:var(--space-lg)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <div><strong>${esc(def.name || def.id)}</strong> ${badge(def.id, '#7C3AED')}</div>
+          <div><strong>${esc(def.name || def.id)}</strong> ${badge(def.id, '#7C3AED')} ${modeBadge(def.mode)}</div>
           <span style="font-size:0.75rem;color:var(--text-muted)">${def.steps.length} steps</span>
         </div>
         ${def.description ? `<p style="font-size:0.83rem;color:var(--text-secondary);margin:6px 0">${esc(def.description)}</p>` : ''}
-        <div class="wf-dag">${this._dagHtml(nodes)}</div>
+        ${orchestrated && def.goal ? `<p style="font-size:0.8rem;margin:6px 0"><span style="color:var(--text-muted)">🎯 Goal:</span> ${esc(def.goal)}</p>` : ''}
+        ${graph}
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px">
           ${params || '<span style="font-size:0.78rem;color:var(--text-muted)">no params</span>'}
           <button class="btn wf-dry" style="font-size:0.78rem;margin-left:auto">Dry run</button>
@@ -618,26 +673,41 @@ class App {
     }).join('') : `<div class="empty-state"><div class="empty-state-icon"><i data-lucide="workflow"></i></div><h3>No workflow templates</h3><p>Drop a <code>workflows/*.json</code> template on the server to see it here.</p></div>`;
 
     const runCards = runs.length ? runs.map(r => {
-      const idToStep = {};
-      r.tasks.forEach(t => { idToStep[t.id] = t.context?.stepKey || t.id.slice(0, 6); });
-      const nodes = r.tasks.map(t => ({
-        key: t.context?.stepKey || t.id, label: t.context?.stepKey || t.title, sub: esc(t.title), status: t.status, taskId: t.id,
-        dependsOn: (t.context?.dependsOn || []).map(id => idToStep[id]).filter(Boolean)
-      }));
+      const orchestrated = r.mode === 'orchestrated';
       const color = r.status === 'done' ? '#22C55E' : r.status === 'failed' ? '#EF4444' : '#0EA5E9';
       const done = r.tasks.filter(t => t.status === 'done').length;
+      let body;
+      if (orchestrated) {
+        body = this._orchestratedRunHtml(r);
+      } else {
+        const idToStep = {};
+        r.tasks.forEach(t => { idToStep[t.id] = t.context?.stepKey || t.id.slice(0, 6); });
+        const nodes = r.tasks.map(t => ({
+          key: t.context?.stepKey || t.id, label: t.context?.stepKey || t.title, sub: esc(t.title), status: t.status, taskId: t.id,
+          dependsOn: (t.context?.dependsOn || []).map(id => idToStep[id]).filter(Boolean)
+        }));
+        body = `<div class="wf-dag">${this._dagHtml(nodes)}</div>`;
+      }
+      const count = orchestrated ? `${(r.history || []).filter(h => h.stepKey).length} steps chosen` : `${done}/${r.tasks.length} done`;
       return `<div class="card" style="margin-bottom:var(--space-md)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <div>${badge(r.workflowId, '#7C3AED')} ${badge(r.status, color)}</div>
-          <span style="font-size:0.75rem;color:var(--text-muted)">${esc(r.runId)} · ${done}/${r.tasks.length} done · ${timeAgo(r.createdAt)}</span>
+          <div>${badge(r.workflowId, '#7C3AED')} ${modeBadge(r.mode)} ${badge(r.status, color)}</div>
+          <span style="font-size:0.75rem;color:var(--text-muted)">${esc(r.runId)} · ${count} · ${timeAgo(r.createdAt)}</span>
         </div>
-        <div class="wf-dag">${this._dagHtml(nodes)}</div>
+        ${orchestrated && r.goal ? `<p style="font-size:0.8rem;margin:6px 0"><span style="color:var(--text-muted)">🎯 Goal:</span> ${esc(r.goal)}</p>` : ''}
+        ${body}
         <div class="wf-run-detail" style="display:none;margin-top:10px"></div>
       </div>`;
     }).join('') : '<div style="color:var(--text-muted);font-size:0.85rem">No runs yet — run a template above and its nodes will light up as tasks complete.</div>';
 
     this.contentEl.innerHTML = `
-      <p style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:var(--space-md)">A workflow template compiles into a DAG of inbox tasks wired by <code>dependsOn</code>; the dispatcher walks them in dependency order. Runs are deterministic and reusable — no LLM re-planning. Run one below, then watch its nodes light up as tasks complete.</p>
+      <div class="card" style="margin-bottom:var(--space-md);background:var(--bg-secondary)">
+        <div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6">
+          <div style="margin-bottom:4px">Two ways to run a multi-step pipeline across the agent company:</div>
+          <div style="margin:3px 0">${badge('DAG · static', '#7C3AED')} steps are wired by <code>dependsOn</code> and the whole graph is expanded up front — the dispatcher walks it in dependency order. Deterministic and reusable, no LLM re-planning.</div>
+          <div style="margin:3px 0">${badge('adaptive · orchestrator-driven', '#0EA5E9')} steps are a <em>library</em>; nothing is planned up front. After each step, the <strong>orchestrator decides the next step automatically</strong> from the goal + results so far — or answers DONE. The path adapts to what comes back.</div>
+        </div>
+      </div>
       ${invalidCard}
       <h3 style="font-size:0.9rem;margin:var(--space-md) 0 6px">Templates</h3>${tplCards}
       <h3 style="font-size:0.9rem;margin:var(--space-xl) 0 6px">Runs <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(click a node to see its output)</span></h3>${runCards}`;

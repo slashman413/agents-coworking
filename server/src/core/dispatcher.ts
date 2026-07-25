@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync, statSync } from 'nod
 import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store } from './store.js';
+import type { Workflows } from './workflows.js';
 
 /** Remove ANSI CSI/OSC escape sequences and lone carriage returns. */
 // eslint-disable-next-line no-control-regex
@@ -54,16 +55,19 @@ export class Dispatcher {
   private config: Config;
   private store: Store;
   private eventBus: EventBus;
+  private workflows?: Workflows;
   private running = new Map<string, { role: string; startedAt: number; workerAgentId?: string }>();
   private agentId: string | null = null;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
   private classifying = new Set<string>();
+  private decidingRuns = new Set<string>();   // orchestrated runs mid-decision (re-entrancy guard)
 
-  constructor(config: Config, store: Store, eventBus: EventBus) {
+  constructor(config: Config, store: Store, eventBus: EventBus, workflows?: Workflows) {
     this.config = config;
     this.store = store;
     this.eventBus = eventBus;
+    this.workflows = workflows;
   }
 
   public start(): void {
@@ -167,6 +171,10 @@ export class Dispatcher {
 
     // Rescue tasks orphaned by a crashed/exited agent (runs every tick, cheap).
     this.reclaimStaleClaims();
+
+    // Advance any orchestrated workflow runs: for each run awaiting a decision,
+    // the orchestrator brain picks the next step (or finishes the run).
+    this.driveWorkflows();
 
     if (this.running.size >= orch.maxConcurrent) return;
 
@@ -433,6 +441,92 @@ export class Dispatcher {
       this.store.saveTask(fresh);
       console.log(`Dispatcher: routed task ${task.id} -> ${division ? division + '/' : ''}${agent}`);
     }
+  }
+
+  /**
+   * Drive orchestrated (adaptive) workflow runs. Unlike a DAG workflow — whose
+   * whole graph is expanded up front — an orchestrated run holds a LIBRARY of
+   * candidate steps and lets the orchestrator brain decide, after each step
+   * finishes, which step to run next (or that the goal is met). This is that
+   * decision loop: every tick, for each run awaiting a decision, we ask the
+   * router brain to choose the next step key (or DONE) given the goal and the
+   * results so far, then materialise that choice as an inbox task the normal
+   * dispatch path executes. A per-run guard prevents overlapping decisions and
+   * orchestration.maxWorkflowSteps caps a runaway loop.
+   */
+  private driveWorkflows(): void {
+    if (!this.workflows) return;
+    const cap = this.config.orchestration.maxWorkflowSteps ?? 12;
+    let pending: ReturnType<Workflows['runsAwaitingDecision']>;
+    try { pending = this.workflows.runsAwaitingDecision(); } catch { return; }
+
+    for (const rec of pending) {
+      if (this.decidingRuns.has(rec.runId)) continue;
+
+      // Safety bound: too many steps dispatched → force-finish so a mis-behaving
+      // orchestrator (never emitting DONE) can't spin forever.
+      const dispatched = rec.history.filter(h => h.stepKey).length;
+      if (dispatched >= cap) {
+        this.workflows.applyDecision(rec.runId, { stepKey: null, reason: `reached step cap (${cap})` });
+        continue;
+      }
+
+      const ctx = this.workflows.decisionContext(rec.runId);
+      if (!ctx) continue;
+      // No candidate steps left → the run has exhausted its library; finish it.
+      if (!ctx.available.length) {
+        this.workflows.applyDecision(rec.runId, { stepKey: null, reason: 'no candidate steps remain' });
+        continue;
+      }
+
+      this.decidingRuns.add(rec.runId);
+      const timeout = this.config.orchestration.classifier?.timeoutMs || 180000;
+      const keys = ctx.available.map(s => s.key);
+      const prompt = this.orchestratorPrompt(ctx);
+
+      (async () => {
+        try {
+          const out = await this.askRouter(prompt, timeout);
+          // The orchestrator answers with a step key or DONE; take the LAST match
+          // so a trailing final answer wins over any earlier mention.
+          const pick = this.pickLast([...keys, 'DONE'], out);
+          const reason = (out.split('\n').map(l => l.trim()).filter(Boolean).pop() || '').slice(0, 200);
+          if (!pick || pick === 'DONE') {
+            this.workflows!.applyDecision(rec.runId, { stepKey: null, reason: reason || 'goal met' });
+          } else {
+            this.workflows!.applyDecision(rec.runId, { stepKey: pick, reason });
+          }
+        } catch (e) {
+          console.error(`Dispatcher: orchestrated run ${rec.runId} decision failed:`, e);
+        } finally {
+          this.decidingRuns.delete(rec.runId);
+        }
+      })();
+    }
+  }
+
+  /** The prompt the orchestrator brain answers to pick the next step of an
+   *  adaptive run: the goal, what's already been done (with results), and the
+   *  remaining candidate steps. It replies with one step key, or DONE. */
+  private orchestratorPrompt(ctx: NonNullable<ReturnType<Workflows['decisionContext']>>): string {
+    const lines: string[] = [];
+    lines.push(`You are the ORCHESTRATOR of an adaptive multi-agent workflow. Decide the single best NEXT step to run to advance the goal — or answer DONE if the goal is already met.`, '');
+    if (ctx.goal) lines.push(`GOAL: ${ctx.goal}`, '');
+    if (ctx.completed.length) {
+      lines.push(`STEPS ALREADY DONE (with their results):`);
+      for (const c of ctx.completed) {
+        const res = (c.result || '').replace(/\s+/g, ' ').slice(0, 400);
+        lines.push(`- ${c.key} [${c.status}]: ${c.title}${res ? `\n    → ${res}` : ''}`);
+      }
+      lines.push('');
+    } else {
+      lines.push(`No steps have run yet — pick the best first step.`, '');
+    }
+    lines.push(`CANDIDATE NEXT STEPS (reply with exactly one key):`);
+    for (const s of ctx.available) lines.push(`- ${s.key}: ${s.title} — ${s.description.replace(/\s+/g, ' ').slice(0, 160)}`);
+    lines.push('');
+    lines.push(`Reply with ONLY the key of the next step to run, or DONE if the goal is met. Do not run redundant work — if the results above already satisfy the goal, answer DONE.`);
+    return lines.join('\n');
   }
 
   /**

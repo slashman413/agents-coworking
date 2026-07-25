@@ -784,3 +784,8 @@ a { color: inherit; text-decoration: none; }
   opacity: 0.55;
 }
 .wf-arrow [data-lucide] { width: 15px; height: 15px; }
+/* The orchestrator's rationale can be a full sentence — let it wrap instead of
+   truncating so an adaptive run's decision log is actually readable. */
+.wf-node-sub[style*="italic"] { white-space: normal; }
+/* Live "orchestrator deciding…" node while an adaptive run picks its next step. */
+.wf-deciding { animation: pulse 1.4s ease-in-out infinite; }

@@ -102,6 +102,10 @@ export interface OrchestrationConfig {
   /** Reclaim in-progress tasks whose claiming agent is gone after this many
    *  ms (0 disables). Rescues work orphaned by a crashed/exited agent. */
   staleClaimMs?: number;
+  /** Safety bound on an orchestrated workflow run: the max number of steps the
+   *  orchestrator may dispatch before the run is force-finished (prevents a
+   *  runaway decision loop). Default 12. */
+  maxWorkflowSteps?: number;
 }
 
 export interface Config {
@@ -246,19 +250,60 @@ export interface WorkflowStep {
 }
 
 /**
- * A reusable, version-controlled pipeline. Loaded from workflows/<id>.json and
- * expanded on demand into a DAG of inbox tasks the dispatcher already knows how
- * to walk (via context.dependsOn). Deterministic: same template + same params →
- * same shape every run.
+ * A reusable, version-controlled pipeline. Loaded from workflows/<id>.json.
+ *
+ * Two execution modes:
+ *   - `dag` (default): the steps form a static DAG wired by `dependsOn`. The whole
+ *     graph is expanded into inbox tasks up front and the dispatcher walks it in
+ *     dependency order. Deterministic — same template + params → same shape.
+ *   - `orchestrated`: the steps are a LIBRARY of candidate moves. Nothing is
+ *     expanded up front; instead, after each step finishes, the orchestrator brain
+ *     reads the goal + results so far and DECIDES which step to run next (or that
+ *     the goal is met). Adaptive — the path taken depends on what came back.
  */
 export interface WorkflowDef {
   id: string;
   /** Human label + one-liner shown in the UI. */
   name?: string;
   description?: string;
-  /** Named params required at run time; referenced as {{name}} in steps. */
+  /** `dag` (static, pre-expanded) or `orchestrated` (adaptive). Default `dag`. */
+  mode?: 'dag' | 'orchestrated';
+  /** Orchestrated mode only: the objective the orchestrator drives toward when
+   *  deciding the next step. `{{param}}` placeholders are filled from run params. */
+  goal?: string;
+  /** Named params required at run time; referenced as {{name}} in steps/goal. */
   params?: string[];
   steps: WorkflowStep[];
+}
+
+/**
+ * One orchestrator decision in an adaptive run: the step it chose to run next
+ * (or `null` = the run is complete), the task that decision created, and a short
+ * rationale pulled from the orchestrator's reply — the audit trail the UI renders
+ * as a decision log so the adaptive path is fully traceable.
+ */
+export interface WorkflowDecision {
+  stepKey: string | null;
+  reason?: string;
+  taskId?: string;
+  decidedAt: string;
+}
+
+/**
+ * Persistent state for an ORCHESTRATED run. DAG runs need no record (they are
+ * reconstructed from task context), but an adaptive run's goal and decision
+ * history live nowhere else, so they are written to workflow-runs/<runId>.json.
+ */
+export interface WorkflowRunRecord {
+  runId: string;
+  workflowId: string;
+  mode: 'orchestrated';
+  goal?: string;
+  params: Record<string, string>;
+  status: 'running' | 'done' | 'failed';
+  history: WorkflowDecision[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** A live/finished run: the tasks one expansion produced, grouped for the UI. */
@@ -268,6 +313,10 @@ export interface WorkflowRun {
   createdAt: string;
   tasks: Task[];
   status: 'running' | 'done' | 'failed';
+  /** `orchestrated` runs carry their mode, goal, and decision log; DAG runs omit these. */
+  mode?: 'dag' | 'orchestrated';
+  goal?: string;
+  history?: WorkflowDecision[];
 }
 
 export type CoworkEventType = keyof CoworkEventPayloads;

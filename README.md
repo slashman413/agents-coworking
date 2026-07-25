@@ -374,14 +374,24 @@ AGY Agent calls:
 
 ---
 
-## Workflows — declarative, reusable pipelines
+## Workflows — declarative pipelines, two execution modes
 
-A **workflow** is a version-controlled template (`workflows/<id>.json`) that
-compiles into a DAG of inbox tasks — the same `context.dependsOn` edges the
-dispatcher already walks. No new execution engine: expansion just pre-wires the
-tasks the dispatcher runs anyway. The win is that a multi-step job becomes
-**deterministic, reusable, and inspectable** instead of an LLM re-planning from
-scratch every time.
+A **workflow** is a version-controlled template (`workflows/<id>.json`). It runs
+in one of two modes, chosen per template with `"mode"`:
+
+- **`dag`** (default) — **static & deterministic.** The steps form a DAG wired by
+  `dependsOn`; the whole graph is expanded into inbox tasks up front and the
+  dispatcher walks it in dependency order. No new execution engine: expansion just
+  pre-wires the tasks the dispatcher runs anyway. A multi-step job becomes
+  reusable and inspectable instead of an LLM re-planning from scratch every time.
+- **`orchestrated`** — **adaptive & orchestrator-driven.** The steps are a
+  *library* of candidate moves; nothing is planned up front. After each step
+  finishes, the **orchestrator brain decides the next step automatically** from
+  the `goal` + the results so far — or answers `DONE`. The path taken adapts to
+  what comes back. Every decision (the step it chose + its rationale) is logged to
+  `workflow-runs/<runId>.json` and rendered as a **decision log** in the dashboard.
+
+### DAG mode
 
 A template is a list of steps; each step is a task with a stable `key` that other
 steps reference in `dependsOn` (resolved to real task ids at run time):
@@ -415,8 +425,47 @@ crashing the list, and the reason is surfaced in the dashboard (and at
 `GET /api/workflows-invalid`) so a malformed template is easy to fix. Steps can
 pin an `agent`, `division`, or `brain`, or leave them off and let the router pick.
 
-The engine (validation, cycle detection, topological expansion, DAG wiring, and
-run reconstruction) is covered by a test suite — `cd server && npm test`.
+### Orchestrated (adaptive) mode
+
+Set `"mode": "orchestrated"`, give the template a `goal`, and list the steps as a
+candidate library (`dependsOn` becomes an optional hint used to wire a step's
+inputs when its upstream has already run). Running it writes a run record and
+creates **no tasks** — the dispatcher's orchestrator loop makes the first
+decision on its next tick, then one more after each step completes:
+
+```json
+{
+  "id": "adaptive-research",
+  "mode": "orchestrated",
+  "goal": "Produce a decision-ready brief answering: {{question}}",
+  "params": ["question"],
+  "steps": [
+    { "key": "scope",     "title": "Scope the question", "division": "operations" },
+    { "key": "survey",    "title": "Broad survey", "division": "operations" },
+    { "key": "deep-dive", "title": "Deep dive on the crux" },
+    { "key": "counter",   "title": "Steelman the opposing view" },
+    { "key": "brief",     "title": "Write the decision brief" }
+  ]
+}
+```
+
+The orchestrator brain (the router model — `orchestration.classifier`, else the
+first local runnable brain in the orchestrator/default chain) is prompted with the
+goal, the completed steps and their results, and the remaining candidates; it
+replies with one step key or `DONE`. `orchestration.maxWorkflowSteps` (default 12)
+force-finishes a run whose orchestrator never says `DONE`.
+
+Both modes stamp every task with `context.workflowId`, `context.workflowRunId`,
+and `context.stepKey` so the **Workflows** tab groups a run and renders it live —
+a DAG for static runs, a decision timeline for adaptive ones. Templates are
+validated on load (unique keys, deps exist, and — for DAG mode — the graph is
+**acyclic**); a template that fails validation is skipped rather than crashing the
+list, and the reason is surfaced in the dashboard (and at
+`GET /api/workflows-invalid`).
+
+The engine (validation, cycle detection, topological expansion, DAG wiring, run
+reconstruction, and the orchestrated decision loop) is covered by a test suite —
+`cd server && npm test`.
 
 ## REST API
 
@@ -432,8 +481,8 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
 | `GET` | `/api/workflows` / `/api/workflows/:id` | Declarative workflow templates (validated) |
 | `GET` | `/api/workflows-invalid` | Templates that failed to load, with the reason (JSON/validation errors) |
-| `POST` | `/api/workflows/:id/run` | Expand a template into DAG tasks; `{ params, dryRun }` |
-| `GET` | `/api/workflow-runs` / `/api/workflow-runs/:runId` | Runs grouped from task context (for the run view) |
+| `POST` | `/api/workflows/:id/run` | Start a run: expand a DAG template into tasks, or begin an orchestrated run; `{ params, dryRun }` |
+| `GET` | `/api/workflow-runs` / `/api/workflow-runs/:runId` | Runs for the run view (DAG grouped from tasks; orchestrated from run records + decision log) |
 | `GET` | `/api/reports` / `/api/reports/:id` | Reports list / full content |
 | `GET` | `/api/roster?division=engineering` | Agent roster (filterable) |
 | `GET` | `/api/roster-divisions` | Roster grouped by division (for the Agents view) |
@@ -456,7 +505,8 @@ cowork/
 ├── PROTOCOL.md              # Protocol specification
 ├── JOIN-AS-A-BRAIN.md       # Onboarding for a remote brain client
 ├── agency-agents/           # git SUBMODULE — the ~285-agent roster
-├── workflows/               # Declarative workflow templates (*.json DAGs)
+├── workflows/               # Workflow templates (*.json) — DAG + orchestrated
+├── workflow-runs/           # Orchestrated run records + decision logs (gitignored)
 ├── server/                  # MCP Server + Web UI
 │   ├── src/                 # TypeScript source
 │   └── public/              # Web UI (HTML/CSS/JS)

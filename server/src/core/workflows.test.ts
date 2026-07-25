@@ -22,10 +22,17 @@ class FakeStore {
   listTasks(): Task[] {
     return this.tasks;
   }
+  getTask(id: string): Task | null {
+    return this.tasks.find(t => t.id === id) || null;
+  }
 }
 
 function makeWorkflows(templates: Record<string, WorkflowDef> = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-test-'));
+  // Give each test its own base dir so the sibling workflow-runs/ (orchestrated
+  // run records) is isolated too — no cross-test contamination.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'wf-test-'));
+  const dir = path.join(base, 'workflows');
+  fs.mkdirSync(dir, { recursive: true });
   for (const [id, def] of Object.entries(templates)) {
     fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify(def));
   }
@@ -183,4 +190,126 @@ test('listRuns / getRun reconstruct a run and derive status', () => {
   assert.equal(wf.getRun(r.runId)!.status, 'failed');
 
   assert.equal(wf.getRun('run-does-not-exist'), null);
+});
+
+// ── orchestrated (adaptive) runs ─────────────────────────────────────────────
+
+const adaptive: WorkflowDef = {
+  id: 'adaptive',
+  mode: 'orchestrated',
+  params: ['topic'],
+  goal: 'Ship a solid brief on {{topic}}',
+  steps: [
+    { key: 'research', title: 'Research {{topic}}', description: 'Gather sources on {{topic}}' },
+    { key: 'draft', title: 'Draft {{topic}}', description: 'Write a draft', dependsOn: ['research'] },
+    { key: 'review', title: 'Review {{topic}}', description: 'Critique the draft', dependsOn: ['draft'] }
+  ]
+};
+
+test('orchestrated dry run echoes the step library + interpolated goal, writes nothing', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' }, { dryRun: true });
+  assert.equal(r.mode, 'orchestrated');
+  assert.equal(r.dryRun, true);
+  assert.equal(r.goal, 'Ship a solid brief on edge AI');
+  assert.equal(store.tasks.length, 0);
+  assert.deepEqual(r.steps.map((s: any) => s.key), ['research', 'draft', 'review']);
+  assert.equal(wf.loadRecord(r.runId), null); // nothing persisted on a dry run
+});
+
+test('orchestrated run persists a record and creates no tasks up front', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  assert.equal(r.mode, 'orchestrated');
+  assert.equal(store.tasks.length, 0);
+  const rec = wf.loadRecord(r.runId)!;
+  assert.equal(rec.status, 'running');
+  assert.equal(rec.goal, 'Ship a solid brief on edge AI');
+  assert.deepEqual(rec.history, []);
+});
+
+test('a fresh orchestrated run awaits its first decision', () => {
+  const { wf } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const awaiting = wf.runsAwaitingDecision().map(x => x.runId);
+  assert.deepEqual(awaiting, [r.runId]);
+});
+
+test('applyDecision materialises the chosen step as a task and logs it', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const task = wf.applyDecision(r.runId, { stepKey: 'research', reason: 'need sources first' })!;
+  assert.ok(task);
+  assert.equal(task.title, 'Research edge AI');
+  assert.equal(task.context!.workflowRunId, r.runId);
+  assert.equal(task.context!.stepKey, 'research');
+  assert.equal(task.context!.orchestrated, true);
+  assert.ok(task.tags?.includes('orchestrated'));
+  const rec = wf.loadRecord(r.runId)!;
+  assert.equal(rec.history.length, 1);
+  assert.equal(rec.history[0].stepKey, 'research');
+  assert.equal(rec.history[0].taskId, task.id);
+  assert.equal(store.tasks.length, 1);
+});
+
+test('a run with an open task does NOT await a decision until it finishes', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const task = wf.applyDecision(r.runId, { stepKey: 'research' })!;
+  // task is pending → not awaiting
+  assert.deepEqual(wf.runsAwaitingDecision().map(x => x.runId), []);
+  // once it completes → awaiting the next decision again
+  store.getTask(task.id)!.status = 'done';
+  assert.deepEqual(wf.runsAwaitingDecision().map(x => x.runId), [r.runId]);
+});
+
+test('applyDecision wires dependsOn to the already-completed upstream task', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const research = wf.applyDecision(r.runId, { stepKey: 'research' })!;
+  store.getTask(research.id)!.status = 'done';
+  const draft = wf.applyDecision(r.runId, { stepKey: 'draft' })!;
+  assert.deepEqual(draft.context!.dependsOn, [research.id]);
+});
+
+test('decisionContext filters used steps out of available and surfaces results', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const research = wf.applyDecision(r.runId, { stepKey: 'research' })!;
+  const t = store.getTask(research.id)!;
+  t.status = 'done';
+  t.result = 'Found 3 key sources.';
+  const ctx = wf.decisionContext(r.runId)!;
+  assert.deepEqual(ctx.available.map(s => s.key), ['draft', 'review']); // research removed
+  assert.equal(ctx.completed.length, 1);
+  assert.equal(ctx.completed[0].key, 'research');
+  assert.equal(ctx.completed[0].result, 'Found 3 key sources.');
+  assert.equal(ctx.goal, 'Ship a solid brief on edge AI');
+});
+
+test('applyDecision(null) finishes the run; it no longer awaits a decision', () => {
+  const { wf } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const out = wf.applyDecision(r.runId, { stepKey: null, reason: 'goal met' });
+  assert.equal(out, null);
+  assert.equal(wf.loadRecord(r.runId)!.status, 'done');
+  assert.deepEqual(wf.runsAwaitingDecision().map(x => x.runId), []);
+});
+
+test('getRun / listRuns render an orchestrated run with mode, goal, and history', () => {
+  const { wf, store } = makeWorkflows({ adaptive });
+  const r = wf.run('adaptive', { topic: 'edge AI' });
+  const research = wf.applyDecision(r.runId, { stepKey: 'research' })!;
+  store.getTask(research.id)!.status = 'done';
+
+  const run = wf.getRun(r.runId)!;
+  assert.equal(run.mode, 'orchestrated');
+  assert.equal(run.goal, 'Ship a solid brief on edge AI');
+  assert.equal(run.history!.length, 1);
+  assert.equal(run.tasks.length, 1);
+
+  // listRuns emits it exactly once (from the record, not double-counted via tasks)
+  const matches = wf.listRuns().filter(x => x.runId === r.runId);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].mode, 'orchestrated');
 });

@@ -69,6 +69,7 @@
       "timeoutMs": 180000
     },
     "staleClaimMs": 1800000,
+    "maxWorkflowSteps": 12,
     "defaultChain": [
       "local-ha-qwen35b",
       "local-ha-deepseek",
