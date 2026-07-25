@@ -196,7 +196,9 @@ export class Dispatcher {
    *  clientless remote rung can't stall the task. A pinned remote brain waits
    *  indefinitely (the CEO asked for that exact brain). */
   private handleRemoteRung(task: Task, plan?: ExecPlan): void {
-    if (!plan || plan.pinned) return;
+    if (!plan) return;
+    this.stampPersona(task, plan);   // so the remote client runs the roster persona too
+    if (plan.pinned) return;
     const grace = this.config.orchestration.remoteGraceMs ?? 0;
     const ctx = task.context || {};
     const since = Number(ctx.remoteWaitSince) || 0;
@@ -219,6 +221,22 @@ export class Dispatcher {
         this.store.saveTask(t);
         console.log(`Dispatcher: remote rung ${plan.brainId} unclaimed ${grace}ms — advancing task ${task.id} to next brain`);
       }
+    }
+  }
+
+  /** Persist the roster agent's full .md persona onto context.persona so a REMOTE
+   *  client — which builds its own prompt from the task — runs the persona too,
+   *  not just the task text. Local runs inject the persona directly (buildPrompt),
+   *  so only remote rungs need this. Idempotent: skips if already current. */
+  private stampPersona(task: Task, plan: ExecPlan): void {
+    if (!plan.isRoster || !plan.agent) return;
+    const persona = this.store.getAgentPersona(plan.agent)?.persona;
+    if (!persona || task.context?.persona === persona) return;
+    const t = this.store.getTask(task.id);
+    if (t) {
+      t.context = { ...(t.context || {}), persona, agentName: plan.agent, division: plan.division };
+      this.store.saveTask(t);
+      task.context = t.context;
     }
   }
 
@@ -442,8 +460,10 @@ export class Dispatcher {
       lines.push(`You are the "${role}" agent in a multi-agent company. Work autonomously and produce your final deliverable as plain text output.`, ``);
     }
     lines.push(`# Task: ${task.title}`, ``, task.description, ``);
-    if (task.context && Object.keys(task.context).length > 0) {
-      lines.push(`# Context`, '```json', JSON.stringify(task.context, null, 2), '```', '');
+    const shownCtx = { ...(task.context || {}) } as Record<string, unknown>;
+    for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster']) delete shownCtx[k];
+    if (Object.keys(shownCtx).length > 0) {
+      lines.push(`# Context`, '```json', JSON.stringify(shownCtx, null, 2), '```', '');
     }
     const deps = task.context?.dependsOn;
     if (Array.isArray(deps) && deps.length > 0) {

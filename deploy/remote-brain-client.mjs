@@ -146,12 +146,18 @@ async function connect() {
 
 // ── Task execution ───────────────────────────────────────────────────────────
 function buildPrompt(task, artDir) {
-  const role = task.context?.role || 'agent';
-  const lines = [
-    `You are the "${role}" agent (brain: ${task.context?.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
-    ``, `# Task: ${task.title}`, ``, task.description, ``
-  ];
-  if (task.context && Object.keys(task.context).length) lines.push('# Context', '```json', JSON.stringify(task.context, null, 2), '```', '');
+  const ctx = task.context || {};
+  const persona = ctx.persona;   // roster agent's full .md persona (stamped by the dispatcher)
+  const role = ctx.agent || ctx.role || 'agent';
+  const lines = persona
+    ? [persona, ``, `---`, ``, `You have been assigned the following task. Work autonomously and produce your final deliverable as plain text (markdown allowed).`, ``,
+       `# Task: ${task.title}`, ``, task.description, ``]
+    : [`You are the "${role}" agent (brain: ${ctx.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
+       ``, `# Task: ${task.title}`, ``, task.description, ``];
+  // Surface user-supplied context, minus the persona + dispatcher bookkeeping (avoid noise/dupes).
+  const shown = { ...ctx };
+  for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster']) delete shown[k];
+  if (Object.keys(shown).length) lines.push('# Context', '```json', JSON.stringify(shown, null, 2), '```', '');
   lines.push(
     `If you generate any files (reports, media, data), save them to the directory: ${artDir} (also in $COWORK_ARTIFACTS_DIR) — they are uploaded to the dashboard as downloadable artifacts when the task completes.`,
     'Your final stdout becomes the task result shown on the dashboard.');
