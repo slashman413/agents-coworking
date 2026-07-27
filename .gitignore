@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.status/agents.json
+*.log
+.DS_Store
+inbox/*.json
+reports/*.md
+decisions/*.md
+server/hermes-*.md
+docs/backlink-*.md
+artifacts/
+workflow-runs/
+
+# Scratch/debug scripts — the server is TypeScript; stray .py files are local-only
+# and have leaked private paths before. Keep them out of git.
+server/*.py

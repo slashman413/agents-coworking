@@ -1,0 +1,3 @@
+[
+  { "id": "remote-{HOST}-codex-default", "exec": "codex", "model": "" }
+]

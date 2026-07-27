@@ -1,0 +1,19 @@
+[Unit]
+Description=Multi-Agent Cowork MCP Server (dashboard + task inbox on :6868)
+After=network.target
+
+[Service]
+Type=simple
+# Edit the paths below to match this machine before `systemctl enable`.
+Environment=PATH=/home/USER/.local/bin:/snap/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+WorkingDirectory=/home/USER/cowork/server
+ExecStart=/home/USER/.local/bin/node dist/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cowork-mcp
+
+[Install]
+WantedBy=default.target

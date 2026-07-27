@@ -1,0 +1,163 @@
+{
+  "_comment": "TEMPLATE ONLY. The real per-server config lives at ~/.cowork/config.json (override with COWORK_CONFIG). On first run the server copies this file there; edit the copy, not this template. Personal host/brain settings must never be committed here.",
+  "server": {
+    "port": 6868,
+    "host": "127.0.0.1",
+    "name": "cowork-mcp",
+    "version": "1.0.0",
+    "apiKey": null
+  },
+  "paths": {
+    "agencyAgents": "./agency-agents",
+    "inbox": "./inbox",
+    "reports": "./reports",
+    "status": "./.status",
+    "decisions": "./decisions",
+    "workflows": "./workflows"
+  },
+  "platforms": {
+    "claude": {
+      "enabled": true,
+      "agentsDir": "~/.claude/agents",
+      "color": "#D97757"
+    },
+    "hermes": {
+      "enabled": true,
+      "skillsDir": "../hermes-agent/skills",
+      "color": "#7C3AED"
+    },
+    "antigravity": {
+      "enabled": true,
+      "skillsDir": "~/.gemini/config/skills",
+      "color": "#0EA5E9"
+    }
+  },
+  "services": {
+    "vllm35b": {
+      "url": "http://localhost:8000/v1",
+      "enabled": false
+    },
+    "vllm27b": {
+      "url": "http://localhost:8001/v1",
+      "enabled": false
+    },
+    "firecrawl": {
+      "url": "http://localhost:3002",
+      "enabled": false
+    },
+    "twseMcp": {
+      "url": "http://localhost:8082/mcp",
+      "enabled": false
+    }
+  },
+  "inbox": {
+    "autoArchiveDays": 30,
+    "maxRetries": 3
+  },
+  "orchestration": {
+    "enabled": true,
+    "maxConcurrent": 2,
+    "pollIntervalMs": 5000,
+    "taskTimeoutMs": 1800000,
+    "defaultRole": "generalist",
+    "remoteGraceMs": 60000,
+    "classifier": {
+      "enabled": true,
+      "exec": "hermes",
+      "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "fallbackRole": "generalist",
+      "timeoutMs": 180000
+    },
+    "verifier": {
+      "_comment": "Rejects soft failures that exit 0 (rate-limit/quota/overloaded/empty replies) so they hand over to the next fallback brain instead of being marked done. failPatterns are merged with the built-ins. Enable llm for an extra LLM quality gate that judges genuine task completion.",
+      "enabled": true,
+      "minLength": 1,
+      "failPatterns": [],
+      "llm": {
+        "enabled": false,
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "timeoutMs": 60000
+      }
+    },
+    "staleClaimMs": 1800000,
+    "maxWorkflowSteps": 12,
+    "defaultChain": [
+      "local-ha-qwen35b",
+      "local-ha-deepseek",
+      "local-cc-opus"
+    ],
+    "divisionChains": {},
+    "agents": {
+      "orchestrator": {
+        "description": "Decompose a CEO idea into role-tagged subtasks and dispatch them",
+        "brains": [
+          "local-cc-fable",
+          "local-ha-qwen35b",
+          "local-ha-deepseek"
+        ]
+      },
+      "generalist": {
+        "description": "Fallback when the router can't classify or a roster agent fails through its chain",
+        "brains": [
+          "local-ha-qwen35b",
+          "local-ha-deepseek",
+          "local-cc-sonnet"
+        ]
+      },
+      "video": {
+        "description": "Short vertical promo/shorts video via the ComfyUI LTX pipeline",
+        "brains": [
+          "local-comfy-ltx"
+        ]
+      }
+    },
+    "brains": {
+      "local-ha-qwen35b": {
+        "description": "Local Hermes agent on Qwen3.6-35B-A3B",
+        "location": "local",
+        "exec": "hermes",
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4"
+      },
+      "local-ha-deepseek": {
+        "description": "Local Hermes agent on DeepSeek-V4-Flash",
+        "location": "local",
+        "exec": "hermes",
+        "model": "deepseek:deepseek-v4-flash"
+      },
+      "local-cc-opus": {
+        "description": "Local Claude Code using Opus 4.8",
+        "location": "local",
+        "exec": "claude",
+        "model": "claude-opus-4-8"
+      },
+      "local-cc-sonnet": {
+        "description": "Local Claude Code using Sonnet 5",
+        "location": "local",
+        "exec": "claude",
+        "model": "claude-sonnet-5"
+      },
+      "local-cc-fable": {
+        "description": "Local Claude Code using Fable 5",
+        "location": "local",
+        "exec": "claude",
+        "model": "claude-fable-5"
+      },
+      "local-comfy-ltx": {
+        "description": "Local ComfyUI LTX video pipeline (short vertical promo)",
+        "location": "local",
+        "exec": "script",
+        "command": [
+          "./deploy/video-pipeline.sh"
+        ]
+      },
+      "remote-example-cc-sonnet": {
+        "description": "EXAMPLE remote brain — a Claude Code client on another machine. Delete or edit; remote brains normally auto-register via register_agent (see JOIN-AS-A-BRAIN.md).",
+        "location": "remote",
+        "exec": "claude",
+        "model": "claude-sonnet-5",
+        "host": "your-remote-host"
+      }
+    }
+  }
+}

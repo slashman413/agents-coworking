@@ -1,0 +1,6 @@
+[
+  { "id": "remote-{HOST}-cc-opus",    "exec": "claude", "model": "claude-opus-4-8" },
+  { "id": "remote-{HOST}-cc-sonnet",  "exec": "claude", "model": "claude-sonnet-5" },
+  { "id": "remote-{HOST}-cc-fable",   "exec": "claude", "model": "claude-fable-5" },
+  { "id": "remote-{HOST}-cc-default", "exec": "claude", "model": "" }
+]
