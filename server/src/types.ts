@@ -191,6 +191,47 @@ export interface ActiveAgent {
   lastHeartbeat: string;
 }
 
+/**
+ * One human-in-the-loop input control on a task card: a question the requester
+ * wants a person to answer, or a checklist item to tick, BEFORE (or while) the
+ * task is worked. The collected `value` is the person's answer.
+ */
+export interface InteractionField {
+  /** Stable id, unique within the task's interaction (used to key responses). */
+  id: string;
+  /** Human-facing label / question text. */
+  label: string;
+  /** Control kind. `checkbox` = a single yes/no (checklist item); `select`
+   *  needs `options`; `text`/`textarea` are free-form. Default `text`. */
+  type?: 'text' | 'textarea' | 'checkbox' | 'select';
+  /** Options for a `select` field. */
+  options?: string[];
+  /** Block submission until this field is answered. */
+  required?: boolean;
+  /** Placeholder / helper hint for text fields. */
+  placeholder?: string;
+  /** The submitted answer (string for text/select, boolean for checkbox). */
+  value?: string | boolean;
+}
+
+/**
+ * A task's human-interaction packet: a set of questions / checklist items a
+ * person fills in from the Inbox card so the executing agent has the extra
+ * information it needs "in advance". Once submitted, the answers are mirrored
+ * into `context.humanInput` so they reach the executor's prompt.
+ */
+export interface TaskInteraction {
+  /** Optional instructions shown above the fields. */
+  prompt?: string;
+  /** The questions / checklist items to collect. */
+  fields: InteractionField[];
+  /** `pending` until a person submits, then `submitted`. */
+  status?: 'pending' | 'submitted';
+  submittedAt?: string;
+  /** Free-form label of who provided the input (e.g. a name or agent id). */
+  submittedBy?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -208,6 +249,9 @@ export interface Task {
   skill?: string;
   context?: Record<string, any>;
   tags?: string[];
+  /** Human-in-the-loop questions/checklist a person answers from the Inbox card
+   *  to supply information in advance. */
+  interaction?: TaskInteraction;
   createdAt: string;
   claimedAt?: string;
   claimedBy?: string;

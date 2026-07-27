@@ -168,7 +168,11 @@ export class Store {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    
+    // A task shipped with an interaction packet starts awaiting human input.
+    if (task.interaction && Array.isArray(task.interaction.fields) && task.interaction.fields.length) {
+      task.interaction.status ||= 'pending';
+    }
+
     const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
     
@@ -312,6 +316,48 @@ export class Store {
   public saveTask(task: Task): void {
     const taskPath = path.join(this.config.paths.inbox, `${task.id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
+  }
+
+  /**
+   * Record a person's answers to a task's interaction (its questions/checklist).
+   * Writes each answer onto its field's `value`, flips the packet to `submitted`,
+   * and mirrors a clean `{label: value}` map into `context.humanInput` so the
+   * answers show up in the executing agent's prompt (buildPrompt dumps context).
+   * Returns the updated task, or null if the task has no interaction.
+   */
+  public submitInteraction(params: {
+    taskId: string;
+    responses: Record<string, string | boolean>;
+    submittedBy?: string;
+  }): Task | null {
+    const task = this.getTask(params.taskId);
+    if (!task || !task.interaction) return null;
+
+    const humanInput: Record<string, string | boolean> = {};
+    for (const field of task.interaction.fields) {
+      if (Object.prototype.hasOwnProperty.call(params.responses, field.id)) {
+        let val = params.responses[field.id];
+        if (field.type === 'checkbox') val = !!val;
+        field.value = val;
+      }
+      // Require required fields to have a non-empty answer.
+      if (field.required) {
+        const v = field.value;
+        const empty = v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+        if (empty && field.type !== 'checkbox') {
+          throw new Error(`Field "${field.label}" is required`);
+        }
+      }
+      if (field.value !== undefined) humanInput[field.label] = field.value;
+    }
+
+    task.interaction.status = 'submitted';
+    task.interaction.submittedAt = new Date().toISOString();
+    if (params.submittedBy) task.interaction.submittedBy = params.submittedBy;
+    task.context = { ...(task.context || {}), humanInput };
+
+    this.saveTask(task);
+    return task;
   }
 
   public getTask(id: string): Task | null {

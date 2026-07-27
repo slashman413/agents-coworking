@@ -177,7 +177,21 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
       priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
       skill: z.string().optional(),
       context: z.record(z.any()).optional(),
-      tags: z.array(z.string()).optional()
+      tags: z.array(z.string()).optional(),
+      // Human-in-the-loop: request questions/checklist a person answers from the
+      // Inbox card before/while the task runs. Their answers reach the executor
+      // via context.humanInput.
+      interaction: z.object({
+        prompt: z.string().optional(),
+        fields: z.array(z.object({
+          id: z.string(),
+          label: z.string(),
+          type: z.enum(['text', 'textarea', 'checkbox', 'select']).optional(),
+          options: z.array(z.string()).optional(),
+          required: z.boolean().optional(),
+          placeholder: z.string().optional()
+        }))
+      }).optional()
     },
     async (args) => {
       try {
@@ -189,7 +203,8 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
           priority: args.priority as any,
           skill: args.skill,
           context: args.context,
-          tags: args.tags
+          tags: args.tags,
+          interaction: args.interaction as any
         });
         return { content: [{ type: 'text', text: JSON.stringify(task) }] };
       } catch (e: any) {

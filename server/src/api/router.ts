@@ -50,7 +50,8 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         priority: ['low', 'normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal',
         skill: body.skill,
         context: body.context,
-        tags: Array.isArray(body.tags) ? body.tags : undefined
+        tags: Array.isArray(body.tags) ? body.tags : undefined,
+        interaction: body.interaction && Array.isArray(body.interaction.fields) ? body.interaction : undefined
       });
       res.status(201).json(task);
     } catch (e: any) {
@@ -96,6 +97,24 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         dryRun: !!dryRun
       }));
     } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Submit a person's answers to a task's interaction (questions/checklist).
+  // Body: { responses: { <fieldId>: string | boolean }, submittedBy?: string }.
+  // The answers are recorded on the task and mirrored into context.humanInput so
+  // the executing agent sees them.
+  router.post('/inbox/:id/interaction', (req, res) => {
+    try {
+      const { responses, submittedBy } = req.body || {};
+      if (!responses || typeof responses !== 'object') {
+        throw new Error('responses (object of fieldId → value) is required');
+      }
+      const task = store.submitInteraction({ taskId: req.params.id, responses, submittedBy });
+      if (!task) return res.status(404).json({ error: 'Task not found or has no interaction' });
+      res.json(task);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   // Delete one task + its reports + its artifacts.

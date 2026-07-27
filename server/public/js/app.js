@@ -514,6 +514,60 @@ class App {
     }
   }
 
+  /**
+   * Human-in-the-loop block for a task card: renders the task's interaction
+   * (questions / checklist) as a fillable form when still pending, or a read-only
+   * summary of the submitted answers once a person has provided them. Returns ''
+   * for tasks that carry no interaction.
+   */
+  interactionBlock(t) {
+    const ix = t.interaction;
+    if (!ix || !Array.isArray(ix.fields) || !ix.fields.length) return '';
+    const submitted = ix.status === 'submitted';
+    const inp = 'width:100%;padding:7px 10px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font:inherit;font-size:0.85rem';
+
+    const fieldHtml = (f) => {
+      const type = f.type || 'text';
+      const req = f.required ? ' <span style="color:#EF4444">*</span>' : '';
+      // Read-only rendering once submitted.
+      if (submitted) {
+        const v = f.value;
+        const shown = type === 'checkbox' ? (v ? '☑ yes' : '☐ no') : (v === undefined || v === '' ? '—' : String(v));
+        return `<div style="margin:8px 0">
+          <div style="font-size:0.78rem;color:var(--text-muted)">${esc(f.label)}</div>
+          <div style="font-size:0.88rem;white-space:pre-wrap">${esc(shown)}</div>
+        </div>`;
+      }
+      const control = type === 'textarea'
+        ? `<textarea data-field="${esc(f.id)}" data-ftype="textarea" rows="3" placeholder="${esc(f.placeholder || '')}" style="${inp};resize:vertical"></textarea>`
+        : type === 'checkbox'
+        ? `<label style="display:inline-flex;align-items:center;gap:8px;font-size:0.88rem;cursor:pointer"><input type="checkbox" data-field="${esc(f.id)}" data-ftype="checkbox"> ${esc(f.label)}${req}</label>`
+        : type === 'select'
+        ? `<select data-field="${esc(f.id)}" data-ftype="select" style="${inp}"><option value="">— choose —</option>${(f.options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
+        : `<input type="text" data-field="${esc(f.id)}" data-ftype="text" placeholder="${esc(f.placeholder || '')}" style="${inp}">`;
+      // Checkbox carries its own inline label; others get a label above.
+      return type === 'checkbox'
+        ? `<div style="margin:10px 0">${control}</div>`
+        : `<div style="margin:10px 0"><label style="display:block;font-size:0.8rem;color:var(--text-secondary);margin-bottom:4px">${esc(f.label)}${req}</label>${control}</div>`;
+    };
+
+    const headColor = submitted ? '#22C55E' : '#EAB308';
+    const headText = submitted
+      ? `Human input received${ix.submittedBy ? ' · ' + esc(ix.submittedBy) : ''}${ix.submittedAt ? ' · ' + timeAgo(ix.submittedAt) : ''}`
+      : 'Provide information';
+    return `<div class="task-interaction" data-interaction="${esc(t.id)}" style="margin-top:12px;padding:12px;border:1px solid ${headColor}40;border-radius:10px;background:${headColor}0d">
+      <div style="display:flex;align-items:center;gap:6px;font-size:0.78rem;text-transform:uppercase;letter-spacing:.03em;color:${headColor};margin-bottom:6px">
+        <i data-lucide="${submitted ? 'check-circle-2' : 'clipboard-list'}" style="width:14px;height:14px"></i> ${headText}
+      </div>
+      ${ix.prompt ? `<div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:8px">${esc(ix.prompt)}</div>` : ''}
+      ${ix.fields.map(fieldHtml).join('')}
+      ${submitted ? '' : `<div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <input data-ix-by placeholder="your name (optional)" style="${inp};max-width:200px">
+        <button class="btn btn-primary interaction-submit" data-ix-task="${esc(t.id)}" style="font-size:0.8rem">Submit input</button>
+      </div>`}
+    </div>`;
+  }
+
   async renderInbox() {
     const q = this.inboxFilter ? `?status=${this.inboxFilter}&limit=100` : '?limit=100';
     const [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
@@ -540,6 +594,8 @@ class App {
             ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
             ${brainLabel ? badge(brainLabel, BRAIN_COLOR) : ''}
             ${failedBrains.map(f => badge(`✗ ${f.brain}`, '#EF4444')).join('')}
+            ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
+            ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
             <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
           </div>
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
@@ -551,6 +607,7 @@ class App {
           ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
         <div class="task-detail">
           ${mdViewer(t.description, 'DESCRIPTION')}
+          ${this.interactionBlock(t)}
           ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT')}</div>` : ''}
           ${failedBrains.length ? `<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted)">
             <span style="text-transform:uppercase; letter-spacing:.03em; color:#EF4444">Failed brains</span>
@@ -597,6 +654,26 @@ class App {
         } catch (err) { this.toast('error', err.message); }
       }));
 
+    // Submit human interaction (questions/checklist) from a task card.
+    this.contentEl.querySelectorAll('.interaction-submit').forEach(btn =>
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.ixTask;
+        const box = btn.closest('.task-interaction');
+        if (!box) return;
+        const responses = {};
+        box.querySelectorAll('[data-field]').forEach(el => {
+          responses[el.dataset.field] = el.dataset.ftype === 'checkbox' ? el.checked : el.value;
+        });
+        const submittedBy = box.querySelector('[data-ix-by]')?.value.trim() || undefined;
+        btn.disabled = true;
+        try {
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/interaction`, { responses, submittedBy });
+          this.toast('input submitted', 'The task now has your answers.');
+          this.renderInbox();
+        } catch (err) { this.toast('error', err.message); btn.disabled = false; }
+      }));
+
     // Purge: always preview with a dry run, then ask before deleting.
     this.contentEl.querySelector('#purge-btn')?.addEventListener('click', async () => {
       const days = Number(this.contentEl.querySelector('#purge-days').value || 30);
@@ -614,7 +691,7 @@ class App {
 
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
       card.addEventListener('click', (e) => {
-        if (e.target.closest('pre, .md-block, a, button')) return;   // don't toggle when interacting with content
+        if (e.target.closest('pre, .md-block, a, button, input, textarea, select, label, .task-interaction')) return;   // don't toggle when interacting with content
         const d = card.querySelector('.task-detail');
         d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
         createIcons();
