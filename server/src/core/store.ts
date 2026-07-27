@@ -183,6 +183,14 @@ export class Store {
   public claimTask(params: { taskId: string; agentId: string; internal?: boolean }): Task | null {
     const task = this.getTask(params.taskId);
     if (!task) return null;
+    // Human-in-the-loop hold: a task with an unanswered interaction packet is not
+    // claimable by anyone (dispatcher or a remote client polling directly) until a
+    // person submits the questions/checklist from the Inbox card. Otherwise the
+    // executor would run before the human input lands in context.humanInput.
+    if (task.interaction && Array.isArray(task.interaction.fields)
+        && task.interaction.fields.length > 0 && task.interaction.status !== 'submitted') {
+      return null;
+    }
     // A LOCAL-brain task is the dispatcher's to run (it spawns the CLI directly and
     // injects the roster persona). External clients must not claim it — otherwise a
     // client that registered a local brain races the dispatcher and runs the task

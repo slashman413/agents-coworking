@@ -63,3 +63,43 @@ test('deleteTask by short id removes the underlying full-id task file', () => {
   assert.equal(out.deleted, true);
   assert.equal(fs.existsSync(file), false, 'task file is gone, not orphaned under the full id');
 });
+
+/**
+ * Human-in-the-loop gate. A task shipped with an unanswered interaction packet
+ * must NOT be claimable — otherwise the executor runs before a person supplies
+ * the answers, so context.humanInput never reaches the prompt. Once the answers
+ * are submitted the same task becomes claimable and carries humanInput.
+ */
+test('claimTask holds a task awaiting human input, then releases it once submitted', () => {
+  const { store } = makeStore();
+  const task = store.createTask({
+    title: 'needs input',
+    from: { platform: 'p', agent: 'a' },
+    interaction: { fields: [{ id: 'q1', label: 'Which env?', required: true }] },
+  } as any);
+
+  assert.equal(task.interaction?.status, 'pending', 'starts awaiting input');
+  assert.equal(store.claimTask({ taskId: task.id, agentId: 'w', internal: true }), null,
+    'dispatcher cannot claim while awaiting input');
+  assert.equal(store.claimTask({ taskId: task.id, agentId: 'remote' }), null,
+    'a remote client cannot claim while awaiting input either');
+  assert.equal(store.getTask(task.id)?.status, 'pending', 'task stays pending, not claimed');
+
+  const answered = store.submitInteraction({ taskId: task.id, responses: { q1: 'staging' }, submittedBy: 'wayne' });
+  assert.equal(answered?.interaction?.status, 'submitted');
+  assert.equal(answered?.context?.humanInput?.['Which env?'], 'staging', 'answer mirrored into humanInput');
+
+  const claimed = store.claimTask({ taskId: task.id, agentId: 'w', internal: true });
+  assert.equal(claimed?.status, 'in-progress', 'now claimable once input is submitted');
+});
+
+test('claimTask is unaffected by an interaction packet with no fields', () => {
+  const { store } = makeStore();
+  const task = store.createTask({
+    title: 'empty packet',
+    from: { platform: 'p', agent: 'a' },
+    interaction: { fields: [] },
+  } as any);
+  assert.equal(store.claimTask({ taskId: task.id, agentId: 'w', internal: true })?.status, 'in-progress',
+    'an empty interaction never blocks claiming');
+});

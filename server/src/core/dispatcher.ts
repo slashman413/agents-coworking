@@ -163,6 +163,15 @@ export class Dispatcher {
     return join(this.config.paths.reports, '..', 'artifacts', taskId);
   }
 
+  /** True while a task still has an unanswered human-in-the-loop interaction
+   *  packet (fields present and not yet `submitted`). Such a task is dispatchable
+   *  only once a person has filled in the questions/checklist from the Inbox
+   *  card, so their answers reach the executor via context.humanInput. */
+  private awaitingHumanInput(task: Task): boolean {
+    const ix = task.interaction;
+    return !!ix && Array.isArray(ix.fields) && ix.fields.length > 0 && ix.status !== 'submitted';
+  }
+
   private tick(): void {
     if (this.stopped || !this.agentId) return;
     const orch = this.config.orchestration;
@@ -194,6 +203,12 @@ export class Dispatcher {
     for (const task of pending) {
       if (this.running.size >= orch.maxConcurrent) break;
       if (this.running.has(task.id)) continue;
+      // Human-in-the-loop gate: a task shipped with an interaction packet is held
+      // until a person submits their answers from the Inbox card. Without this the
+      // dispatcher would run the task on the very next tick — before anyone can
+      // answer — so context.humanInput would be empty in the executor's prompt,
+      // defeating the whole "supply information in advance" purpose.
+      if (this.awaitingHumanInput(task)) continue;
       const plan = this.planFor(task);
       switch (plan.action) {
         case 'skip': continue;               // manual, or unknown target
