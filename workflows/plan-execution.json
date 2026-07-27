@@ -1,0 +1,56 @@
+{
+  "id": "plan-execution",
+  "name": "Plan Execution (orchestrator-driven, actually runs the jobs)",
+  "description": "An ORCHESTRATED workflow that doesn't just plan — it EXECUTES. It turns a plan into concrete jobs, then the orchestrator brain drives them to completion: after each step it reads the goal + the results produced so far and picks the next step (or declares DONE). One step hands off to the 'orchestrator' agent, which dispatches the real jobs to the specialist roster and wires each downstream job to the OUTPUTS of the jobs it depends on. Every step declares dependsOn so the agent running it is actually handed the results of the steps it builds on. Ends only when the plan's goal is achieved and every requirement passes verification.",
+  "mode": "orchestrated",
+  "goal": "Fully EXECUTE the plan end-to-end — dispatch the real work to specialist agents, feed each job the outputs of the jobs it depends on, then verify — until the plan's GOAL is achieved and every REQUIREMENT is satisfied. The plan to execute: {{plan}}",
+  "params": ["plan"],
+  "steps": [
+    {
+      "key": "analyze-plan",
+      "title": "Analyze the plan into executable jobs",
+      "description": "Read the plan and turn it into an execution-ready job list. For EACH job specify: (a) a unique job id, (b) exactly what deliverable it must produce, (c) which other jobs' OUTPUTS it must be based on (its inputs), (d) the specialist or division best suited to do it, and (e) a concrete, checkable acceptance criterion. Then state the overall Definition of Done: the checklist that proves the plan's GOAL is achieved and every REQUIREMENT is met. Plan: \"{{plan}}\". Output as markdown.",
+      "division": "operations"
+    },
+    {
+      "key": "execution-strategy",
+      "title": "Sequence the jobs and wire their data flow",
+      "description": "Using the job list above, produce the execution strategy: the topological order the jobs must run in, which jobs can run in parallel, and — critically — the exact output-to-input wiring (which job consumes which upstream job's RESULT). Mark the critical path and the highest-risk jobs. This is the map the orchestrator will dispatch against. Output as markdown.",
+      "division": "operations",
+      "dependsOn": ["analyze-plan"]
+    },
+    {
+      "key": "orchestrate-execution",
+      "title": "Dispatch and manage the real jobs",
+      "description": "You are managing execution of the plan. Take the job list and the wiring strategy provided above and ACTUALLY dispatch each job as a real subtask to the company roster — one POST per job — leaving the agent unassigned so the router picks the best specialist, or pinning context.division / context.agent when the analysis already named one. For every job that is based on another job's output, set its context.dependsOn to the task id(s) of those upstream jobs so the specialist is handed its inputs. Include a final integration subtask that dependsOn all the leaf jobs. After dispatching, output a summary mapping each job -> task id -> its dependencies.",
+      "agent": "orchestrator",
+      "dependsOn": ["analyze-plan", "execution-strategy"]
+    },
+    {
+      "key": "integrate",
+      "title": "Integrate the delivered work",
+      "description": "Collect the outputs produced by the dispatched jobs and assemble them into the single combined deliverable the plan calls for. Reconcile any inconsistencies between the pieces. If the artifacts are large, output a clear manifest of what was produced and where each piece lives, plus the assembled top-level result. Output as markdown.",
+      "dependsOn": ["orchestrate-execution"]
+    },
+    {
+      "key": "verify-requirements",
+      "title": "Verify the result against every requirement",
+      "description": "Check the integrated result against the Definition of Done and every acceptance criterion from the plan analysis. For each requirement, output PASS or FAIL with the concrete evidence. List every remaining gap precisely enough that a specialist could fix it without re-reading the whole plan. Output as markdown.",
+      "agent": "code-reviewer",
+      "dependsOn": ["analyze-plan", "integrate"]
+    },
+    {
+      "key": "remediate",
+      "title": "Fix the gaps found in verification",
+      "description": "For each FAIL or gap from verification, dispatch a targeted fix subtask to the right specialist — one POST per fix — wiring context.dependsOn to the relevant prior outputs so the fixer has full context, then summarize what you dispatched. Skip anything already passing. If verification found no gaps, state plainly that no remediation is needed.",
+      "agent": "orchestrator",
+      "dependsOn": ["verify-requirements"]
+    },
+    {
+      "key": "deliver",
+      "title": "Deliver the outcome",
+      "description": "Produce the final delivery report: what was built, a requirement-by-requirement mapping that shows the plan's GOAL is achieved, where each artifact lives, and any residual risks or recommended follow-ups. This is the report the CEO reads to confirm the plan is done. Output as markdown.",
+      "dependsOn": ["integrate", "verify-requirements"]
+    }
+  ]
+}
