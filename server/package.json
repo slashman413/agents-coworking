@@ -11,7 +11,7 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^5.1.0",
     "glob": "^11.0.0",
     "gray-matter": "^4.0.3",
