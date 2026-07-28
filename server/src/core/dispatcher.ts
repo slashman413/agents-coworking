@@ -5,7 +5,7 @@ import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store, CompletionDecision } from './store.js';
 import type { Workflows } from './workflows.js';
-import { verifyOutput, buildVerifierPrompt, parseLlmVerdict, detectInputRequest, type VerifyVerdict, type InputOptions } from './result-verifier.js';
+import { verifyOutput, buildVerifierPrompt, parseLlmVerdict, detectInputRequest, type VerifyVerdict, type InputOptions, type InputRequest } from './result-verifier.js';
 
 /** Remove ANSI CSI/OSC escape sequences and lone carriage returns. */
 // eslint-disable-next-line no-control-regex
@@ -670,38 +670,58 @@ export class Dispatcher {
    * rate-limit-that-exited-0 masquerade); if that passes and the LLM verifier is
    * enabled, a verifier brain judges whether the output truly completes the task.
    * A bad verdict makes execute() hand the task to the next brain in the chain.
+   *
+   * NOTE on ordering: callers MUST run {@link detectInputRequest} on an
+   * otherwise-ok result BEFORE the LLM gate (see execute / verifyReportedCompletion).
+   * The LLM verifier is told to FAIL anything that "does not actually address the
+   * task" — which is exactly what a genuine QUESTION back to the user looks like.
+   * Letting it run first would turn a request-for-input into a brain handover and
+   * strand the question, never parking it on wait-input. This method is the
+   * composition of the two gates for callers that have already ruled out an input
+   * request (or don't care).
    */
   private async verifyResult(task: Task, output: { ok: boolean; text: string }): Promise<VerifyVerdict> {
+    const det = this.deterministicVerdict(output);
+    if (!det.ok) return det;
+    return this.llmVerdict(task, output.text);
+  }
+
+  /** Gate 1 — cheap, deterministic exit-code + pattern/emptiness check. Catches
+   *  the rate-limit / quota / overloaded / empty reply that exits 0. */
+  private deterministicVerdict(output: { ok: boolean; text: string }): VerifyVerdict {
     const cfg = this.config.orchestration.verifier;
     if (cfg?.enabled === false) return { ok: output.ok, reason: output.ok ? undefined : output.text.slice(0, 200) };
-
-    const verdict = verifyOutput(output.text, output.ok, {
+    return verifyOutput(output.text, output.ok, {
       failPatterns: cfg?.failPatterns,
       replacePatterns: cfg?.replacePatterns,
       minLength: cfg?.minLength
     });
-    if (!verdict.ok) return verdict;
+  }
 
-    // Optional second gate: an LLM verifier agent judges genuine completion.
-    if (cfg?.llm?.enabled) {
-      try {
-        const argv = this.buildArgv({ exec: (cfg.llm.exec || 'hermes') as RoleConfig['exec'], model: cfg.llm.model || '' },
-          buildVerifierPrompt(task, output.text));
-        const reply = await new Promise<string>((resolve) => {
-          const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
-          let out = '';
-          const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(out); }, cfg.llm!.timeoutMs || 60000);
-          child.stdout.on('data', d => { out += d.toString(); });
-          child.on('error', () => resolve(''));
-          child.on('close', () => { clearTimeout(timer); resolve(stripAnsi(out)); });
-        });
-        return parseLlmVerdict(reply);
-      } catch (e) {
-        console.error(`Dispatcher: LLM verifier errored (failing open):`, e);
-        return { ok: true };   // never discard a real deliverable because the verifier crashed
-      }
+  /** Gate 2 (optional, config-gated) — an LLM verifier agent judges whether the
+   *  output GENUINELY completes the task. Fails open ({ ok: true }) when disabled
+   *  or on any error so a real deliverable is never discarded by a flaky verifier.
+   *  Only run on a result that has passed the deterministic gate AND is not an
+   *  input request (see the class doc + call sites). */
+  private async llmVerdict(task: Task, text: string): Promise<VerifyVerdict> {
+    const cfg = this.config.orchestration.verifier;
+    if (!cfg?.llm?.enabled) return { ok: true };
+    try {
+      const argv = this.buildArgv({ exec: (cfg.llm.exec || 'hermes') as RoleConfig['exec'], model: cfg.llm.model || '' },
+        buildVerifierPrompt(task, text));
+      const reply = await new Promise<string>((resolve) => {
+        const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+        let out = '';
+        const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(out); }, cfg.llm!.timeoutMs || 60000);
+        child.stdout.on('data', d => { out += d.toString(); });
+        child.on('error', () => resolve(''));
+        child.on('close', () => { clearTimeout(timer); resolve(stripAnsi(out)); });
+      });
+      return parseLlmVerdict(reply);
+    } catch (e) {
+      console.error(`Dispatcher: LLM verifier errored (failing open):`, e);
+      return { ok: true };   // never discard a real deliverable because the verifier crashed
     }
-    return { ok: true };
   }
 
   /** Input-request detection options from the verifier config (question phrases). */
@@ -749,17 +769,24 @@ export class Dispatcher {
       return req.needsInput ? { action: 'wait-input', questions: req.questions } : { action: 'complete' };
     }
 
-    const verdict = await this.verifyResult(task, { ok: true, text });
-    // A FAILURE (rate-limit/quota/error) is decided first — only an otherwise-ok
-    // result is inspected for an input request, so a soft failure is a handover,
-    // not a wait-input.
+    // Strict gate precedence:
+    //   (1) hard/soft FAILURE (rate-limit/quota/empty) — decided first, so a soft
+    //       failure is a handover, never a wait-input.
+    //   (2) QUESTION back to the user — an otherwise-ok result that asks for input
+    //       is parked on wait-input BEFORE the LLM gate. The LLM verifier is told
+    //       to FAIL anything that "does not actually address the task", which a
+    //       genuine question does; running it first would turn the question into a
+    //       handover and strand it.
+    //   (3) LLM quality gate — only a genuine deliverable is judged for completion.
+    let verdict = this.deterministicVerdict({ ok: true, text });
     if (verdict.ok) {
       const req = detectInputRequest(text, this.inputOpts());
       if (req.needsInput) {
         console.log(`Dispatcher: reported result for task ${task.id} on ${brainId} is a QUESTION → wait-input (${req.matched || 'phrase'})`);
         return { action: 'wait-input', questions: req.questions };
       }
-      return { action: 'complete' };
+      verdict = await this.llmVerdict(task, text);
+      if (verdict.ok) return { action: 'complete' };
     }
 
     const failReason = verdict.reason || (result || '').slice(0, 300);
@@ -895,11 +922,25 @@ export class Dispatcher {
     this.store.countRun('local', plan.brainId);
     if (task.from?.agent) this.store.countSubmitted(task.from.agent, plan.brainId);
 
-    // VERIFY the result — a brain that hit a rate limit (or refused, or returned
-    // nothing) can still exit 0 and masquerade as a clean success. The verifier
-    // rejects those so the handover below advances to the next fallback brain
-    // instead of marking a non-result "done".
-    const verdict = await this.verifyResult(task, output);
+    // VERIFY the result in strict gate precedence:
+    //   (1) hard/soft FAILURE — a brain that hit a rate limit (or refused, or
+    //       returned nothing) can still exit 0 and masquerade as a clean success;
+    //       the deterministic gate rejects those so the handover below advances to
+    //       the next fallback brain instead of marking a non-result "done".
+    //   (2) QUESTION for the user — an otherwise-ok result that asks for input is
+    //       a SUCCESSFUL run awaiting the user, parked on wait-input below. It must
+    //       be recognised BEFORE the LLM gate: that verifier is told to FAIL a
+    //       result that "does not actually address the task", which a genuine
+    //       question does — running it first would hand the question to the next
+    //       brain and strand it, never asking the user.
+    //   (3) LLM quality gate — only a genuine deliverable is judged for completion.
+    const detVerdict = this.deterministicVerdict(output);
+    const inputReq: InputRequest = detVerdict.ok ? detectInputRequest(output.text, this.inputOpts()) : { needsInput: false, questions: [] };
+    const verdict: VerifyVerdict = !detVerdict.ok
+      ? detVerdict
+      : inputReq.needsInput
+        ? { ok: true }                                 // question → skip the LLM gate, park below
+        : await this.llmVerdict(task, output.text);
     if (output.ok && !verdict.ok) {
       console.log(`Dispatcher: verifier REJECTED task ${task.id} result on ${plan.brainId} — ${verdict.reason}`);
     }
@@ -959,7 +1000,7 @@ export class Dispatcher {
     // nor hands it to a fallback brain. Answering from the Inbox card releases it
     // back to `pending`, re-dispatched with the answers in context.humanInput.
     if (verdict.ok) {
-      const req = detectInputRequest(output.text, this.inputOpts());
+      const req = inputReq;   // computed above (gate 2), before the LLM gate
       if (req.needsInput) {
         const t = this.store.getTask(task.id);
         if (t) {
