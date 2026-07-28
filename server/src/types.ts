@@ -245,7 +245,11 @@ export interface Task {
     agent?: string;
   };
   priority: 'low' | 'normal' | 'high' | 'urgent';
-  status: 'pending' | 'claimed' | 'in-progress' | 'done' | 'rejected';
+  /** `wait-input` = a task holding an unanswered human-in-the-loop interaction
+   *  packet. It is deliberately NOT `pending`, so the dispatcher never schedules,
+   *  routes, or hands it off to a fallback brain. It flips to `pending` (entering
+   *  normal scheduling) only once a person submits their answers. */
+  status: 'wait-input' | 'pending' | 'claimed' | 'in-progress' | 'done' | 'rejected';
   skill?: string;
   context?: Record<string, any>;
   tags?: string[];
@@ -283,6 +287,8 @@ export interface DashboardData {
   activeAgents: number;
   inboxSummary: {
     pending: number;
+    /** Tasks parked on `wait-input` — blocked awaiting a person's answers. */
+    waitingInput: number;
     inProgress: number;
     completed: number;
   };

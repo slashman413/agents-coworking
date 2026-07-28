@@ -79,14 +79,16 @@ test('claimTask holds a task awaiting human input, then releases it once submitt
   } as any);
 
   assert.equal(task.interaction?.status, 'pending', 'starts awaiting input');
+  assert.equal(task.status, 'wait-input', 'parked on wait-input, not pending, so it is never scheduled/reassigned');
   assert.equal(store.claimTask({ taskId: task.id, agentId: 'w', internal: true }), null,
     'dispatcher cannot claim while awaiting input');
   assert.equal(store.claimTask({ taskId: task.id, agentId: 'remote' }), null,
     'a remote client cannot claim while awaiting input either');
-  assert.equal(store.getTask(task.id)?.status, 'pending', 'task stays pending, not claimed');
+  assert.equal(store.getTask(task.id)?.status, 'wait-input', 'task stays on wait-input, not claimed');
 
   const answered = store.submitInteraction({ taskId: task.id, responses: { q1: 'staging' }, submittedBy: 'wayne' });
   assert.equal(answered?.interaction?.status, 'submitted');
+  assert.equal(answered?.status, 'pending', 'released to pending for scheduling once answers are submitted');
   assert.equal(answered?.context?.humanInput?.['Which env?'], 'staging', 'answer mirrored into humanInput');
 
   const claimed = store.claimTask({ taskId: task.id, agentId: 'w', internal: true });

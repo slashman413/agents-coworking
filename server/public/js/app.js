@@ -16,7 +16,7 @@ function timeAgo(iso) {
 }
 
 const STATUS_COLORS = {
-  pending: '#EAB308', claimed: '#0EA5E9', 'in-progress': '#0EA5E9',
+  'wait-input': '#A855F7', pending: '#EAB308', claimed: '#0EA5E9', 'in-progress': '#0EA5E9',
   done: '#22C55E', rejected: '#EF4444',
   idle: '#94A3B8', working: '#22C55E', blocked: '#EF4444'
 };
@@ -287,7 +287,7 @@ class App {
       <div class="grid-4" style="margin-bottom: var(--space-xl)">
         ${stat('bot', status.activeAgents, 'Active Agents')}
         ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
-               `Open Tasks (${status.inboxSummary.completed} done)`)}
+               `Open Tasks (${status.inboxSummary.completed} done${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
         ${stat('file-text', status.recentReports, 'Recent Reports')}
         ${stat('users', status.rosterCount, 'Agent Roster')}
       </div>
@@ -571,7 +571,7 @@ class App {
   async renderInbox() {
     const q = this.inboxFilter ? `?status=${this.inboxFilter}&limit=100` : '?limit=100';
     const [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
-    const pills = ['', 'pending', 'in-progress', 'done'].map(f => {
+    const pills = ['', 'wait-input', 'pending', 'in-progress', 'done'].map(f => {
       const label = f === '' ? 'All' : f;
       const active = this.inboxFilter === f;
       return `<button class="btn pill" data-filter="${f}" style="${active ? 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)' : ''}">${esc(label)}</button>`;

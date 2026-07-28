@@ -71,9 +71,15 @@ Tasks are stored as JSON files in the `inbox/` directory:
 ### Task Status Lifecycle
 
 ```
-pending → claimed → in-progress → done
-                                 → rejected
+wait-input → pending → claimed → in-progress → done
+                                              → rejected
 ```
+
+`wait-input` — a task carrying an unanswered human-in-the-loop `interaction`
+packet. It is deliberately held OUT of the `pending` pool, so the orchestrator
+never schedules, routes, or reassigns it. Once a person submits their answers
+(`POST /api/inbox/:id/interaction`) the task is released to `pending` and enters
+normal scheduling. Tasks without an interaction packet start directly at `pending`.
 
 ### Priority Levels
 

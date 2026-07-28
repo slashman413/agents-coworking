@@ -254,7 +254,7 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
   server.tool(
     'list_inbox',
     {
-      status: z.enum(['pending', 'claimed', 'in-progress', 'done', 'rejected']).optional(),
+      status: z.enum(['wait-input', 'pending', 'claimed', 'in-progress', 'done', 'rejected']).optional(),
       platform: z.string().optional(),
       agent: z.string().optional(),
       limit: z.number().default(20)

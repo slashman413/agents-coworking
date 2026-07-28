@@ -203,11 +203,12 @@ export class Dispatcher {
     for (const task of pending) {
       if (this.running.size >= orch.maxConcurrent) break;
       if (this.running.has(task.id)) continue;
-      // Human-in-the-loop gate: a task shipped with an interaction packet is held
-      // until a person submits their answers from the Inbox card. Without this the
-      // dispatcher would run the task on the very next tick — before anyone can
-      // answer — so context.humanInput would be empty in the executor's prompt,
-      // defeating the whole "supply information in advance" purpose.
+      // Human-in-the-loop gate (defense-in-depth): a task awaiting a person's
+      // answers is parked on the `wait-input` category, so it never appears in the
+      // `pending` pool above and is thus never scheduled OR reassigned. This guard
+      // stays as a backstop in case a task ever reaches `pending` with its
+      // interaction still unanswered — running it now would leave context.humanInput
+      // empty, defeating the "supply information in advance" purpose.
       if (this.awaitingHumanInput(task)) continue;
       const plan = this.planFor(task);
       switch (plan.action) {

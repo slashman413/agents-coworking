@@ -168,9 +168,12 @@ export class Store {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    // A task shipped with an interaction packet starts awaiting human input.
+    // A task shipped with an unanswered interaction packet is parked on the
+    // `wait-input` category — held OUT of the pending pool so the dispatcher never
+    // schedules or reassigns it. submitInteraction() releases it to `pending`.
     if (task.interaction && Array.isArray(task.interaction.fields) && task.interaction.fields.length) {
       task.interaction.status ||= 'pending';
+      if (task.interaction.status !== 'submitted') task.status = 'wait-input';
     }
 
     const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
@@ -363,6 +366,10 @@ export class Store {
     task.interaction.submittedAt = new Date().toISOString();
     if (params.submittedBy) task.interaction.submittedBy = params.submittedBy;
     task.context = { ...(task.context || {}), humanInput };
+    // Release the task into normal scheduling now that the answers are in. Only a
+    // task still parked on `wait-input` is promoted — one already claimed/running
+    // (e.g. answers edited mid-flight) keeps its live status untouched.
+    if (task.status === 'wait-input') task.status = 'pending';
 
     this.saveTask(task);
     return task;
@@ -563,6 +570,7 @@ export class Store {
     const activeAgents = this.activeAgents.size;
     const tasks = this.listTasks();
     const pending = tasks.filter(t => t.status === 'pending').length;
+    const waitingInput = tasks.filter(t => t.status === 'wait-input').length;
     const inProgress = tasks.filter(t => t.status === 'in-progress' || t.status === 'claimed').length;
     const completed = tasks.filter(t => t.status === 'done').length;
     
@@ -577,6 +585,7 @@ export class Store {
       activeAgents,
       inboxSummary: {
         pending,
+        waitingInput,
         inProgress,
         completed
       },
