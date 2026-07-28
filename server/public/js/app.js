@@ -79,6 +79,8 @@ class App {
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
     this.chatBusy = false;
+    this.chatSessions = this.loadChatSessions();  // persisted recent chat sessions (newest first)
+    this.chatSessionId = null;                    // id of the session currently open in the composer
 
     this.contentEl = document.getElementById('content');
     this.viewTitleEl = document.getElementById('view-title');
@@ -98,6 +100,14 @@ class App {
       body.style.display = showRaw ? 'none' : '';
       raw.hidden = !showRaw;
       btn.textContent = showRaw ? 'Rendered' : 'Raw';
+    });
+    // Delegated open/delete for the Chat view's recent-sessions strip (the chips
+    // are re-rendered in place, so a document-level handler avoids stale listeners).
+    document.addEventListener('click', (e) => {
+      const del = e.target.closest('[data-chat-del]');
+      if (del) { e.preventDefault(); e.stopPropagation(); this.deleteChatSession(del.dataset.chatDel); return; }
+      const open = e.target.closest('[data-chat-open]');
+      if (open) this.openChatSession(open.dataset.chatOpen);
     });
   }
 
@@ -398,6 +408,7 @@ class App {
 
     this.contentEl.innerHTML = `
       <div style="display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:420px">
+        ${this.chatRecentBar()}
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
           <select id="chat-brain" style="${sel}">${brainOpts}</select>
           <select id="chat-div" style="${sel}">${divOpts}</select>
@@ -428,10 +439,93 @@ class App {
     const doSend = () => { const t = input.value.trim(); if (t && !this.chatBusy) { input.value = ''; this.sendChat(t); } };
     this.contentEl.querySelector('#chat-send').addEventListener('click', doSend);
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
-    this.contentEl.querySelector('#chat-new').addEventListener('click', () => { this.chatMessages = []; this.renderChatMessages(); });
+    this.contentEl.querySelector('#chat-new').addEventListener('click', () => this.startNewChat());
 
     this.renderChatMessages();
     input.focus();
+  }
+
+  // ── Recent chat sessions (persisted client-side; 5 newest shown atop the view) ──
+
+  loadChatSessions() {
+    try { const v = JSON.parse(localStorage.getItem('cowork.chatSessions') || '[]'); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  }
+
+  saveChatSessions() {
+    // Cap what we persist so history can't grow unbounded; best-effort (a disabled
+    // or full localStorage must never break the chat).
+    try { localStorage.setItem('cowork.chatSessions', JSON.stringify(this.chatSessions.slice(0, 30))); }
+    catch { /* storage unavailable — recent list is a nicety, not required */ }
+  }
+
+  /** Snapshot the open conversation into the session list (newest first). No-op
+   *  until there's at least one completed message worth remembering. */
+  persistCurrentChat() {
+    const msgs = this.chatMessages.filter(m => !m.pending && (m.content || '').trim());
+    if (!msgs.length) return;
+    const firstUser = msgs.find(m => m.role === 'user');
+    const title = (firstUser?.content || 'chat').replace(/\s+/g, ' ').trim().slice(0, 48) || 'chat';
+    if (!this.chatSessionId) this.chatSessionId = 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const rec = {
+      id: this.chatSessionId,
+      title,
+      sel: { ...this.chatSel },
+      messages: msgs.map(m => ({ role: m.role, content: m.content, meta: m.meta || null })),
+      updatedAt: new Date().toISOString()
+    };
+    this.chatSessions = [rec, ...this.chatSessions.filter(s => s.id !== rec.id)];
+    this.saveChatSessions();
+  }
+
+  startNewChat() {
+    this.persistCurrentChat();      // keep the conversation being left behind
+    this.chatMessages = [];
+    this.chatSessionId = null;
+    this.renderChatMessages();
+    this.renderChatRecent();
+  }
+
+  openChatSession(id) {
+    const rec = this.chatSessions.find(s => s.id === id);
+    if (!rec) return;
+    this.persistCurrentChat();      // save whatever's open before switching away
+    this.chatSessionId = rec.id;
+    this.chatSel = { brain: '', division: '', agent: '', ...(rec.sel || {}) };
+    this.chatMessages = (rec.messages || []).map(m => ({ ...m }));
+    this.renderChat();              // rebuild selects + transcript from the restored state
+  }
+
+  deleteChatSession(id) {
+    this.chatSessions = this.chatSessions.filter(s => s.id !== id);
+    this.saveChatSessions();
+    if (this.chatSessionId === id) { this.chatMessages = []; this.chatSessionId = null; this.renderChatMessages(); }
+    this.renderChatRecent();
+  }
+
+  /** The 5-newest recent-sessions strip shown above the brain/agent select row.
+   *  Always emits the #chat-recent container (hidden when empty) so it can be
+   *  refreshed in place. Every interpolated value is esc()'d (no raw HTML). */
+  chatRecentBar() {
+    const recent = this.chatSessions.slice(0, 5);
+    const inner = recent.map(s => {
+      const active = s.id === this.chatSessionId;
+      const target = s.sel?.agent || s.sel?.brain || (s.sel?.division ? 'division:' + s.sel.division : 'auto');
+      return `<span class="chat-recent-chip" data-chat-open="${esc(s.id)}" title="${esc(s.title)}"
+        style="display:inline-flex;align-items:center;gap:6px;max-width:240px;padding:5px 9px;border-radius:999px;border:1px solid var(--bg-tertiary);background:${active ? 'var(--bg-tertiary)' : 'var(--bg-secondary)'};font-size:0.74rem;cursor:pointer">
+        <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px">${esc(s.title || 'chat')}</span>
+        <span style="color:var(--text-muted);white-space:nowrap">${esc(target)} · ${timeAgo(s.updatedAt)}</span>
+        <span data-chat-del="${esc(s.id)}" title="Delete" style="opacity:.55;padding:0 2px;font-weight:600">×</span>
+      </span>`;
+    }).join('');
+    return `<div id="chat-recent" style="display:${recent.length ? 'flex' : 'none'};gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:0.7rem;color:var(--text-muted);margin-right:2px">Recent</span>${inner}
+    </div>`;
+  }
+
+  renderChatRecent() {
+    const el = this.contentEl.querySelector('#chat-recent');
+    if (el) el.outerHTML = this.chatRecentBar();
   }
 
   populateChatAgents(division) {
@@ -500,6 +594,8 @@ class App {
     } finally {
       this.chatBusy = false;
       this.renderChatMessages();
+      this.persistCurrentChat();   // snapshot this exchange into the recent list
+      this.renderChatRecent();
     }
   }
 

@@ -68,6 +68,13 @@ export interface VerifierConfig {
   replacePatterns?: boolean;
   /** A trimmed result shorter than this many chars is treated as empty. Default 1. */
   minLength?: number;
+  /** Detect a result that ASKS THE USER a question (rather than delivering) and
+   *  park the task on `wait-input` instead of marking it done. Default on. */
+  detectInput?: boolean;
+  /** Extra case-insensitive phrases that also mark a result as an input request. */
+  inputPatterns?: string[];
+  /** Replace the built-in input-request phrases entirely instead of merging. */
+  replaceInputPatterns?: boolean;
   /** Optional LLM verifier agent stacked on top of the deterministic check. */
   llm?: {
     enabled: boolean;

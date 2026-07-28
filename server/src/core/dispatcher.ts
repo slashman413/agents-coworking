@@ -5,7 +5,7 @@ import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store, CompletionDecision } from './store.js';
 import type { Workflows } from './workflows.js';
-import { verifyOutput, buildVerifierPrompt, parseLlmVerdict, type VerifyVerdict } from './result-verifier.js';
+import { verifyOutput, buildVerifierPrompt, parseLlmVerdict, detectInputRequest, type VerifyVerdict, type InputOptions } from './result-verifier.js';
 
 /** Remove ANSI CSI/OSC escape sequences and lone carriage returns. */
 // eslint-disable-next-line no-control-regex
@@ -630,7 +630,8 @@ export class Dispatcher {
     lines.push(
       ``,
       `If you generate any files (reports, media, data), save them to the directory: ${artifactsDir} — they become downloadable from the dashboard when the task completes.`,
-      `When done, your final output (stdout) becomes the task result visible to the CEO on the dashboard.`
+      `When done, your final output (stdout) becomes the task result visible to the CEO on the dashboard.`,
+      `If you CANNOT finish without more information or a decision from the user, do NOT guess or invent an answer. End your output with a line beginning "NEEDS_INPUT:" followed by your question(s), one per line. The task will then pause and wait for the user to answer instead of being marked done.`
     );
     return lines.join('\n');
   }
@@ -703,6 +704,16 @@ export class Dispatcher {
     return { ok: true };
   }
 
+  /** Input-request detection options from the verifier config (question phrases). */
+  private inputOpts(): InputOptions {
+    const cfg = this.config.orchestration.verifier;
+    return {
+      disabled: cfg?.detectInput === false,
+      patterns: cfg?.inputPatterns,
+      replacePatterns: cfg?.replaceInputPatterns
+    };
+  }
+
   /** Append a failed-brain record to the task's inbox entry so the fallback trail
    *  is visible on the dashboard: which brains failed, in order, and why. */
   private recordFailedBrain(taskId: string, entry: { brain: string; agent: string; attempt: number; reason: string }): void {
@@ -726,12 +737,30 @@ export class Dispatcher {
    * attributable to a configured brain (human / pipeline completions) pass through.
    */
   private verifyReportedCompletion = async (task: Task, result?: string): Promise<CompletionDecision> => {
+    const text = result || '';
     const brains = this.config.orchestration.brains || {};
     const brainId = typeof task.context?.brain === 'string' ? task.context.brain : undefined;
-    if (!brainId || !brains[brainId]) return { action: 'complete' };
 
-    const verdict = await this.verifyResult(task, { ok: true, text: result || '' });
-    if (verdict.ok) return { action: 'complete' };
+    // Results not attributable to a configured brain (human / pipeline
+    // completions) skip the failure/fallback gate, but a QUESTION back to the
+    // user is still parked so it isn't silently marked done.
+    if (!brainId || !brains[brainId]) {
+      const req = detectInputRequest(text, this.inputOpts());
+      return req.needsInput ? { action: 'wait-input', questions: req.questions } : { action: 'complete' };
+    }
+
+    const verdict = await this.verifyResult(task, { ok: true, text });
+    // A FAILURE (rate-limit/quota/error) is decided first — only an otherwise-ok
+    // result is inspected for an input request, so a soft failure is a handover,
+    // not a wait-input.
+    if (verdict.ok) {
+      const req = detectInputRequest(text, this.inputOpts());
+      if (req.needsInput) {
+        console.log(`Dispatcher: reported result for task ${task.id} on ${brainId} is a QUESTION → wait-input (${req.matched || 'phrase'})`);
+        return { action: 'wait-input', questions: req.questions };
+      }
+      return { action: 'complete' };
+    }
 
     const failReason = verdict.reason || (result || '').slice(0, 300);
     const attempt = Number(task.context?.attempts) || 0;
@@ -922,6 +951,26 @@ export class Dispatcher {
       });
     } catch (e) {
       console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
+    }
+
+    // The result is a QUESTION back to the user (not a failure — verdict is ok —
+    // and not a finished deliverable). Park the task on `wait-input` with the
+    // questions as an interaction packet: the orchestrator neither marks it done
+    // nor hands it to a fallback brain. Answering from the Inbox card releases it
+    // back to `pending`, re-dispatched with the answers in context.humanInput.
+    if (verdict.ok) {
+      const req = detectInputRequest(output.text, this.inputOpts());
+      if (req.needsInput) {
+        const t = this.store.getTask(task.id);
+        if (t) {
+          t.context = { ...(t.context || {}), ranAgent: plan.agent, ranDivision: plan.division, ranBrain: plan.brainId, isRoster: plan.isRoster };
+          if (artifacts.length) (t as any).artifacts = artifacts;
+          this.store.saveTask(t);
+        }
+        this.store.parkForInput({ taskId: task.id, questions: req.questions, result: output.text.slice(0, 4000) });
+        console.log(`Dispatcher: task ${task.id} paused on wait-input — agent asked ${req.questions.length} question(s) (${req.matched || 'phrase'})`);
+        return;
+      }
     }
 
     // The whole fallback chain is exhausted here. Summarise which brains failed

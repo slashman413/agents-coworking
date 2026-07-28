@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyOutput, parseLlmVerdict, buildVerifierPrompt, DEFAULT_FAIL_PATTERNS } from './result-verifier.js';
+import { verifyOutput, parseLlmVerdict, buildVerifierPrompt, DEFAULT_FAIL_PATTERNS, detectInputRequest, DEFAULT_QUESTION_PATTERNS } from './result-verifier.js';
 
 /**
  * The result verifier is the fix for "a rate-limit reply looked like a done
@@ -106,4 +106,69 @@ test('buildVerifierPrompt includes task + result and asks for PASS/FAIL', () => 
   assert.match(p, /Write X/);
   assert.match(p, /the deliverable/);
   assert.match(p, /PASS or FAIL/);
+});
+
+/* ── input-request detection (wait-input) ──────────────────────────────────── */
+
+test('genuine transport error is flagged as a failure, not passed as done', () => {
+  assert.equal(verifyOutput('Error: read ECONNRESET', true).ok, false);
+  assert.equal(verifyOutput('upstream connect error or disconnect/reset before headers', true).ok, false);
+  assert.equal(verifyOutput('503 Service Unavailable', true).ok, false);
+});
+
+test('NEEDS_INPUT sentinel makes it a request-for-input with the question captured', () => {
+  const r = detectInputRequest('I made progress but must pause.\nNEEDS_INPUT: Which environment should I deploy to — staging or production?');
+  assert.equal(r.needsInput, true);
+  assert.equal(r.questions.length, 1);
+  assert.match(r.questions[0], /staging or production/);
+});
+
+test('sentinel with question(s) on following lines collects each', () => {
+  const r = detectInputRequest('NEEDS_INPUT:\n- What is the target repo?\n- Which branch should I push to?');
+  assert.equal(r.needsInput, true);
+  assert.deepEqual(r.questions, ['What is the target repo?', 'Which branch should I push to?']);
+});
+
+test('blocking phrase without a sentinel is detected and the ?-line lifted out', () => {
+  const r = detectInputRequest('I cannot proceed without the API key.\nCould you provide the production API key?');
+  assert.equal(r.needsInput, true);
+  assert.ok(r.questions.some(q => /production API key/.test(q)));
+});
+
+test('a finished deliverable that merely signs off is NOT parked', () => {
+  const r = detectInputRequest('# Report\n\nHere is the complete analysis with recommendations.\n\nLet me know if you want any changes!');
+  assert.equal(r.needsInput, false);
+});
+
+test('a deliverable containing rhetorical questions is NOT parked', () => {
+  const r = detectInputRequest('## FAQ\n\nWhat is caching? It is a technique to store results. Why use it? For speed.');
+  assert.equal(r.needsInput, false);
+});
+
+test('detection can be disabled', () => {
+  const r = detectInputRequest('NEEDS_INPUT: which one?', { disabled: true });
+  assert.equal(r.needsInput, false);
+});
+
+test('empty extraction falls back to a generic question', () => {
+  const r = detectInputRequest('NEEDS_INPUT:');
+  assert.equal(r.needsInput, true);
+  assert.equal(r.questions.length, 1);
+  assert.match(r.questions[0], /needs more information/i);
+});
+
+test('custom inputPatterns merge with the built-ins', () => {
+  assert.equal(detectInputRequest('PLEASE ADVISE on the schema', { patterns: ['please advise'] }).needsInput, true);
+  // built-ins still apply when merging extras
+  assert.equal(detectInputRequest('I need clarification on the scope', { patterns: ['x'] }).needsInput, true);
+});
+
+test('DEFAULT_QUESTION_PATTERNS is non-empty and matched case-insensitively', () => {
+  assert.ok(DEFAULT_QUESTION_PATTERNS.length > 0);
+  assert.equal(detectInputRequest('I NEED CLARIFICATION on the requirements').needsInput, true);
+});
+
+test('questions are capped at 8', () => {
+  const many = 'NEEDS_INPUT:\n' + Array.from({ length: 15 }, (_, i) => `- Question ${i}?`).join('\n');
+  assert.equal(detectInputRequest(many).questions.length, 8);
 });

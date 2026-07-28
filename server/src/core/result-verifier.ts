@@ -76,6 +76,20 @@ export const DEFAULT_FAIL_PATTERNS: string[] = [
   'invalid api key',
   'invalid x-api-key',
   'your credit balance',
+  // transport / genuine API errors an exit-0 CLI can still print as its "answer".
+  // Kept to unambiguous transport shapes so a deliverable that merely *discusses*
+  // errors (a doc about HTTP status codes) is not flagged.
+  'econnreset',
+  'etimedout',
+  'esockettimedout',
+  'socket hang up',
+  'connection reset by peer',
+  'upstream connect error',
+  '503 service unavailable',
+  '504 gateway timeout',
+  'bad gateway',
+  'internal_server_error',
+  'api_error',
 ];
 
 /**
@@ -149,4 +163,149 @@ export function parseLlmVerdict(reply: string): VerifyVerdict {
   const isFail = firstFail !== -1 && (firstPass === -1 || firstFail < firstPass);
   if (isFail) return { ok: false, reason: `verifier LLM: ${firstLine(text)}` };
   return { ok: true };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * INPUT-REQUEST detection — the third outcome a raw "done" status hides. A brain
+ * can exit 0 with a genuine, on-topic result that is NOT a deliverable but a
+ * QUESTION back to the user ("which environment should I target?"). Marking that
+ * "done" loses the question and strands the requester. When detected the
+ * dispatcher parks the task on `wait-input` (never scheduled/handed-off) and turns
+ * the questions into an interaction packet the user answers.
+ *
+ * Precedence (enforced by the dispatcher): a hard/soft FAILURE is decided first
+ * (a rate-limit notice is a failure, not a question). Only an otherwise-ok result
+ * is inspected for input requests.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface InputRequest {
+  needsInput: boolean;
+  /** The question(s) posed to the user — become the wait-input interaction fields. */
+  questions: string[];
+  /** The sentinel/phrase that triggered detection (for logs). */
+  matched?: string;
+}
+
+export interface InputOptions {
+  /** Extra case-insensitive phrases that also mark a result as an input request. */
+  patterns?: string[];
+  /** Replace the built-in phrases entirely instead of merging the extras in. */
+  replacePatterns?: boolean;
+  /** Turn detection off (trust the deliverable as complete). */
+  disabled?: boolean;
+}
+
+/**
+ * A DEFINITIVE marker an agent is told (via the executor prompt) to emit when it
+ * cannot finish without the user: a line beginning `NEEDS_INPUT:` (also accepts
+ * WAIT_INPUT / AWAITING_INPUT and a "Questions for the user" heading). Everything
+ * after the marker — the inline remainder plus following lines — is the question.
+ */
+const INPUT_SENTINEL =
+  /^\s*(?:#{1,6}\s*)?\**\s*(NEEDS[_ -]?INPUT|WAIT[_ -]?INPUT|AWAITING[_ -]?INPUT|QUESTIONS?\s+FOR\s+(?:THE\s+)?USER)\**\s*:?\s*(.*)$/i;
+
+/**
+ * Blocking phrases that signal the agent is stuck asking the user (not a polite
+ * "let me know if you want changes" sign-off — those are deliberately excluded so
+ * a finished deliverable is not parked). Matched case-insensitively as substrings.
+ */
+export const DEFAULT_QUESTION_PATTERNS: string[] = [
+  'i need clarification',
+  'need clarification on',
+  'i need more information',
+  'i need more details',
+  'i need additional information',
+  'i need you to clarify',
+  'cannot proceed without',
+  "can't proceed without",
+  'cannot complete this task without',
+  "can't complete this task without",
+  'unable to proceed without',
+  'i cannot continue without',
+  "i can't continue without",
+  'blocked pending your',
+  'need your decision',
+  'need a decision from you',
+  'please clarify',
+  'could you clarify',
+  'could you please clarify',
+  'please confirm which',
+  'please confirm whether',
+  'please specify which',
+  'which of these would you like',
+  'which approach would you prefer',
+  'which option would you prefer',
+  'do you want me to proceed with',
+  'should i proceed with',
+  'would you like me to proceed',
+];
+
+const GENERIC_QUESTION = 'The agent needs more information to proceed. Please provide guidance.';
+
+/**
+ * Decide whether a finished, otherwise-ok result is really a QUESTION back to the
+ * user. Returns needsInput + the extracted question(s). A sentinel line is
+ * authoritative; failing that, a blocking phrase (see DEFAULT_QUESTION_PATTERNS)
+ * flags it and the `?`-terminated lines are lifted out as the questions.
+ */
+export function detectInputRequest(text: string, opts: InputOptions = {}): InputRequest {
+  const none: InputRequest = { needsInput: false, questions: [] };
+  if (opts.disabled) return none;
+  const raw = (text || '').trim();
+  if (!raw) return none;
+  const lines = raw.split('\n');
+
+  // 1. Authoritative sentinel.
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(INPUT_SENTINEL);
+    if (!m) continue;
+    const questions: string[] = [];
+    const inline = (m[2] || '').trim();
+    if (inline) questions.push(inline);
+    for (let j = i + 1; j < lines.length; j++) {
+      const q = cleanQuestionLine(lines[j]);
+      if (q) questions.push(q);
+    }
+    return { needsInput: true, questions: capQuestions(questions), matched: m[1].toUpperCase() };
+  }
+
+  // 2. Heuristic: a blocking phrase means the run is a request-for-input.
+  const patterns = opts.replacePatterns
+    ? (opts.patterns ?? [])
+    : [...DEFAULT_QUESTION_PATTERNS, ...(opts.patterns ?? [])];
+  const hay = raw.toLowerCase();
+  let matched: string | undefined;
+  for (const p of patterns) {
+    const needle = p.toLowerCase();
+    if (needle && hay.includes(needle)) { matched = p; break; }
+  }
+  if (!matched) return none;
+
+  // Extract the actual question(s): `?`-terminated lines, else the sentence that
+  // contains the matched phrase, else a generic prompt.
+  let questions = lines.map(cleanQuestionLine).filter((l): l is string => !!l && l.endsWith('?'));
+  if (!questions.length) {
+    const sentence = raw.split(/(?<=[.!?])\s+/).find(s => s.toLowerCase().includes(matched!.toLowerCase()));
+    if (sentence) questions = [sentence.trim()];
+  }
+  return { needsInput: true, questions: capQuestions(questions), matched };
+}
+
+/** Strip list markers / heading hashes so a question line reads as plain text. */
+function cleanQuestionLine(line: string): string {
+  return (line || '').trim().replace(/^(?:[-*+]|\d+[.)]|#{1,6})\s+/, '').trim();
+}
+
+/** Dedupe, drop empties, cap count (8) and each length (500), or a generic fallback. */
+function capQuestions(questions: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const q of questions) {
+    const clean = (q || '').trim().slice(0, 500);
+    if (!clean || seen.has(clean.toLowerCase())) continue;
+    seen.add(clean.toLowerCase());
+    out.push(clean);
+    if (out.length >= 8) break;
+  }
+  return out.length ? out : [GENERIC_QUESTION];
 }

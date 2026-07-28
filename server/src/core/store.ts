@@ -3,7 +3,7 @@ import path from 'path';
 import matter from 'gray-matter';
 import { v4 as uuidv4 } from 'uuid';
 import { globSync } from 'glob';
-import type { Config, ActiveAgent, Task, Report, DashboardData, AgentCard } from '../types.js';
+import type { Config, ActiveAgent, Task, Report, DashboardData, AgentCard, InteractionField } from '../types.js';
 import type { EventBus } from './events.js';
 import { Roster } from './roster.js';
 
@@ -13,11 +13,14 @@ import { Roster } from './roster.js';
  * same result verification as local runs. `handover` means the guard has already
  * re-queued the task for the next fallback brain — do NOT mark it done. `complete`
  * lets completion proceed, optionally rewriting the stored result (e.g. a
- * "chain exhausted" FAILED summary).
+ * "chain exhausted" FAILED summary). `wait-input` means the result is really a
+ * QUESTION back to the user: park the task on `wait-input` with the questions as
+ * an interaction packet instead of marking it done or handing it off.
  */
 export type CompletionDecision =
   | { action: 'complete'; result?: string }
-  | { action: 'handover' };
+  | { action: 'handover' }
+  | { action: 'wait-input'; questions?: string[] };
 export type CompletionGuard = (task: Task, result?: string) => Promise<CompletionDecision>;
 
 export class Store {
@@ -237,6 +240,9 @@ export class Store {
     if (!params.internal && this.completionGuard && task.status !== 'done') {
       const decision = await this.completionGuard(task, params.result);
       if (decision.action === 'handover') return this.getTask(params.taskId);
+      if (decision.action === 'wait-input') {
+        return this.parkForInput({ taskId: task.id, questions: decision.questions || [], result: params.result });
+      }
       if (decision.result !== undefined) result = decision.result;
     }
 
@@ -371,6 +377,50 @@ export class Store {
     // (e.g. answers edited mid-flight) keeps its live status untouched.
     if (task.status === 'wait-input') task.status = 'pending';
 
+    this.saveTask(task);
+    return task;
+  }
+
+  /**
+   * Park a task on `wait-input` because its produced result ASKED THE USER a
+   * question rather than delivering — so the orchestrator neither marks it done
+   * nor hands it to a fallback brain. The questions become an interaction packet
+   * the user answers from the Inbox card; submitInteraction() then releases it
+   * back to `pending` (re-dispatched with the answers in context.humanInput). The
+   * partial output is preserved on task.result so the user sees what was asked.
+   */
+  public parkForInput(params: { taskId: string; questions: string[]; result?: string }): Task | null {
+    const task = this.getTask(params.taskId);
+    if (!task) return null;
+    const qs = (params.questions || []).map(q => (q || '').trim()).filter(Boolean).slice(0, 8);
+    const labels = qs.length ? qs : ['The agent needs more information to proceed. Please provide guidance.'];
+    const fields: InteractionField[] = labels.map((label, i) => ({
+      id: `q${i + 1}`,
+      label,
+      type: 'textarea',
+      // First question required so the packet can't be submitted empty; the rest optional.
+      required: i === 0
+    }));
+    task.interaction = {
+      prompt: 'The assigned agent paused and needs your input before it can finish this task.',
+      fields,
+      status: 'pending'
+    };
+    task.status = 'wait-input';
+    delete task.claimedAt;
+    delete task.claimedBy;
+    if (params.result) task.result = params.result;
+    // Reset scheduling flags so the resubmitted task re-dispatches cleanly from the
+    // top of its chain — the previous run succeeded in producing a question, not a
+    // failure, so it must not count against the fallback attempts.
+    task.context = {
+      ...(task.context || {}),
+      dispatched: false,
+      attempts: 0,
+      remoteWaitSince: undefined,
+      awaitingInput: true,
+      inputQuestions: qs
+    };
     this.saveTask(task);
     return task;
   }
