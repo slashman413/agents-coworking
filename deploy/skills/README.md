@@ -8,9 +8,7 @@ runtime copies live in each client's dotfile dir; these are the tracked source o
 | `claude-cowork.SKILL.md` | `~/.claude/skills/cowork/SKILL.md` | Claude Code |
 | `hermes-cowork.SKILL.md` | `~/.hermes/skills/cowork/SKILL.md` | Hermes agent |
 
-The Antigravity/Gemini brain-registration skill
-(`~/.gemini/config/skills/agency-cowork-brain/SKILL.md`) is a minimal register +
-heartbeat + task-loop skill with no dispatcher description, so it is not vendored here.
+| `agy-cowork.SKILL.md` | `~/.gemini/config/skills/cowork/SKILL.md` | Antigravity (Gemini CLI) |
 
 To update a live copy after editing here (or vice-versa), copy the file to/from the
 install path above. These describe the two-stage roster router (division → 1-of-285
