@@ -10,6 +10,8 @@ import { createApiRouter } from './api/router.js';
 import { createWorkflowRouter } from './api/workflows.js';
 import { createSSEHandler } from './api/sse.js';
 import { Workflows } from './core/workflows.js';
+import { SystemMetrics } from './core/system-metrics.js';
+import { probeServices } from './core/service-probe.js';
 
 async function main() {
   const config = loadConfig();
@@ -17,6 +19,10 @@ async function main() {
   const store = new Store(config, eventBus);
 
   store.initialize();
+
+  // Host system-load sampler feeding the dashboard's top metrics bar.
+  const sysMetrics = new SystemMetrics();
+  sysMetrics.start();
 
   const app = express();
   app.use(express.json());
@@ -156,6 +162,20 @@ async function main() {
     res.json(byDiv);
   });
 
+  // ── Host system load (CPU/GPU/memory/temperature) for the dashboard bar ────
+  // Cached snapshot refreshed on a background timer, so this is O(1) and safe to
+  // poll every few seconds from the UI.
+  app.get('/api/system', (_req, res) => res.json(sysMetrics.get()));
+
+  // ── Service reachability for the Portal (probed from the host) ─────────────
+  app.get('/api/services', async (_req, res) => {
+    try {
+      res.json(await probeServices(config.services));
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Connections: external MCP clients (heartbeat-live) + invocation counters ─
   app.get('/api/connections', (_req, res) => {
     const now = Date.now();
@@ -282,6 +302,7 @@ async function main() {
   const shutdown = (signal: string) => {
     console.log(`${signal} received, shutting down...`);
     clearInterval(cleanup);
+    sysMetrics.stop();
     dispatcher.stop();
     httpServer.close(() => process.exit(0));
     // Open SSE connections keep the server alive — force-exit after 3s

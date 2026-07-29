@@ -109,7 +109,7 @@ const PORTAL_CATALOG = {
 // configured. Operator config.services entries override these by key.
 const PORTAL_DEFAULTS = {
   mautic:      { url: 'http://localhost:8081' },
-  filebrowser: { url: 'http://localhost:8082' },
+  filebrowser: { url: 'http://localhost:8080' },
 };
 
 const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
@@ -293,7 +293,21 @@ class App {
     this.renderCurrentView();
   }
 
+  // Per-view polling timers. Cleared and re-established on every render so a
+  // view's pollers stop the moment you navigate away (and SSE-driven re-renders
+  // don't stack duplicate intervals).
+  clearViewTimers() {
+    (this._viewTimers || []).forEach((id) => clearInterval(id));
+    this._viewTimers = [];
+  }
+  addViewTimer(fn, ms) {
+    const id = setInterval(fn, ms);
+    (this._viewTimers ||= []).push(id);
+    return id;
+  }
+
   async renderCurrentView() {
+    this.clearViewTimers();
     try {
       switch (this.currentView) {
         case 'chat': await this.renderChat(); break;
@@ -353,6 +367,7 @@ class App {
       : '<p style="color:var(--text-muted); font-size:0.875rem">Waiting for events…</p>';
 
     this.contentEl.innerHTML = `
+      ${this.renderSysbar()}
       <div class="grid-4" style="margin-bottom: var(--space-xl)">
         ${stat('bot', status.activeAgents, 'Active Agents')}
         ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
@@ -388,6 +403,100 @@ class App {
         <h3 style="font-size:0.95rem; margin-bottom:var(--space-md)">Platforms</h3>
         <div>${platforms}</div>
       </div>`;
+
+    // Kick off (and keep) the 3s system-load polling for as long as we're on
+    // the dashboard. clearViewTimers() (in renderCurrentView) stops it on nav.
+    this.startSystemPolling();
+  }
+
+  // ── System load bar (CPU / GPU / Memory / Temperature) ───────────────────
+
+  // Pick a meter color band by how "hot" a 0–100 value is.
+  sysBand(pct) {
+    if (pct == null) return 'idle';
+    if (pct >= 90) return 'crit';
+    if (pct >= 70) return 'warn';
+    return 'ok';
+  }
+
+  // Build the bar from the last known snapshot (this.sysMetrics) so SSE-driven
+  // re-renders never flash back to placeholders. Live values then update in
+  // place via applySysbar(). Only numbers + an escaped GPU name reach the DOM.
+  renderSysbar() {
+    const s = this.sysMetrics || null;
+    const tile = (id, icon, label) => `
+      <div class="sysbar-tile">
+        <div class="sysbar-head">
+          <i data-lucide="${icon}"></i><span class="sysbar-label">${label}</span>
+          <span class="sysbar-val" id="sys-${id}-val">—</span>
+        </div>
+        <div class="meter"><div class="meter-fill" id="sys-${id}-bar" style="width:0%"></div></div>
+        <div class="sysbar-sub" id="sys-${id}-sub">—</div>
+      </div>`;
+    const html = `
+      <div class="sysbar" id="sysbar">
+        ${tile('cpu', 'cpu', 'CPU')}
+        ${tile('gpu', 'gpu', 'GPU')}
+        ${tile('mem', 'memory-stick', 'Memory')}
+        ${tile('temp', 'thermometer', 'Core Temp')}
+      </div>`;
+    // If we already have a snapshot, apply it after this HTML lands in the DOM.
+    if (s) queueMicrotask(() => this.applySysbar(s));
+    return html;
+  }
+
+  // Update the bar's tiles in place from a snapshot (no full re-render).
+  applySysbar(s) {
+    if (!s) return;
+    const set = (id, val, pct, sub) => {
+      const v = document.getElementById(`sys-${id}-val`);
+      const b = document.getElementById(`sys-${id}-bar`);
+      const u = document.getElementById(`sys-${id}-sub`);
+      if (v) v.textContent = val;
+      if (b) {
+        b.style.width = `${pct == null ? 0 : Math.max(0, Math.min(100, pct))}%`;
+        b.className = `meter-fill ${this.sysBand(pct)}`;
+      }
+      if (u) u.textContent = sub;
+    };
+    const pct = (n) => (n == null ? '—' : `${n}%`);
+    const mb = (n) => (n == null ? '—' : n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${Math.round(n)} MB`);
+
+    // CPU
+    const cpu = s.cpu || {};
+    set('cpu', pct(cpu.usage), cpu.usage,
+      `${cpu.cores || '—'} cores${cpu.load1 != null ? ` · load ${cpu.load1}` : ''}`);
+
+    // GPU (aggregate over all cards)
+    const g = s.gpu;
+    if (g) {
+      const memPct = (g.memoryUsedMb != null && g.memoryTotalMb) ? Math.round((g.memoryUsedMb / g.memoryTotalMb) * 100) : null;
+      const name = (s.gpus && s.gpus.length === 1) ? s.gpus[0].name : (s.gpus && s.gpus.length > 1 ? `${s.gpus.length}× GPU` : '');
+      set('gpu', pct(g.usage), g.usage,
+        `${mb(g.memoryUsedMb)}/${mb(g.memoryTotalMb)}${g.temperature != null ? ` · ${g.temperature}°C` : ''}${name ? ` · ${name.slice(0, 22)}` : ''}`);
+    } else {
+      set('gpu', 'n/a', null, 'no GPU detected');
+    }
+
+    // Memory
+    const m = s.memory || {};
+    set('mem', pct(m.usage), m.usage, `${mb(m.usedMb)}/${mb(m.totalMb)}`);
+
+    // Core temperature — meter scaled against a 100°C ceiling.
+    const t = cpu.temperature;
+    set('temp', t == null ? '—' : `${t}°C`, t, t == null ? 'unavailable' : 'CPU package');
+  }
+
+  startSystemPolling() {
+    const poll = async () => {
+      try {
+        const s = await this.api.get('/system');
+        this.sysMetrics = s;
+        this.applySysbar(s);
+      } catch { /* transient — keep last known values */ }
+    };
+    poll();
+    this.addViewTimer(poll, 3000);
   }
 
   // ── Active Agents ──────────────────────────────────────────────────────
@@ -1586,6 +1695,10 @@ class App {
           <span class="portal-icon" style="background:${c}18; color:${c}; border:1px solid ${c}33">
             <i data-lucide="${esc(s.icon)}"></i>
           </span>
+          <span class="svc-status ${s.enabled ? 'checking' : 'disabled'}" data-svc="${esc(s.key)}"
+                title="${s.enabled ? 'Checking…' : 'Monitoring disabled'}">
+            <span class="svc-dot"></span><span class="svc-text">${s.enabled ? 'checking' : 'disabled'}</span>
+          </span>
           <span class="portal-open"><i data-lucide="external-link"></i></span>
         </div>
         <div class="portal-title">${esc(s.label)}${s.enabled ? '' : ` ${badge('disabled', '#94A3B8')}`}</div>
@@ -1606,8 +1719,53 @@ class App {
       <p style="color:var(--text-secondary); font-size:0.875rem; margin-bottom:var(--space-lg)">
         Quick-launch the local web services running on this host. Cards come from your
         <code>config.json</code> <code>services</code> block, enriched with built-in defaults.
+        Status dots are probed from the server every 3s.
       </p>
       ${sections}`;
+
+    // Paint the last known statuses immediately (no flash on re-render), then
+    // keep them fresh every 3s for as long as we're on the Portal.
+    if (this.svcStatus) this.applyServiceStatus(this.svcStatus);
+    this.startServicePolling();
+  }
+
+  // Map a probe result to a UI state: online | offline | disabled | unknown.
+  svcState(st) {
+    if (!st) return 'unknown';
+    if (!st.enabled || st.reason === 'disabled') return 'disabled';
+    return st.online ? 'online' : 'offline';
+  }
+
+  // Update every Portal card's status dot in place from a { key → status } map.
+  applyServiceStatus(map) {
+    document.querySelectorAll('.svc-status[data-svc]').forEach((el) => {
+      const key = el.getAttribute('data-svc');
+      const st = map[key];
+      const state = this.svcState(st);
+      el.className = `svc-status ${state}`;
+      const label = { online: 'online', offline: 'offline', disabled: 'disabled', unknown: 'unknown' }[state];
+      const txt = el.querySelector('.svc-text');
+      if (txt) txt.textContent = label;
+      const tip = {
+        online: st ? `Online${st.code ? ` · HTTP ${st.code}` : ''}${st.ms != null ? ` · ${st.ms}ms` : ''}` : 'Online',
+        offline: st ? `Offline${st.reason ? ` · ${st.reason}` : ''}` : 'Offline',
+        disabled: 'Monitoring disabled in config',
+        unknown: 'Status unknown (not in config.services)',
+      }[state];
+      el.setAttribute('title', tip);
+    });
+  }
+
+  startServicePolling() {
+    const poll = async () => {
+      try {
+        const map = await this.api.get('/services');
+        this.svcStatus = map;
+        this.applyServiceStatus(map);
+      } catch { /* transient — keep last known dots */ }
+    };
+    poll();
+    this.addViewTimer(poll, 3000);
   }
 
   async renderConfig() {
