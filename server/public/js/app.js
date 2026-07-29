@@ -761,14 +761,20 @@ class App {
     if (filter === 'failed') tasks = tasks.filter(isTaskFailed);
     else if (filter === 'done') tasks = tasks.filter(t => !isTaskFailed(t));
 
-    const pills = ['', 'wait-input', 'pending', 'in-progress', 'done', 'failed'].map(f => {
+    const pills = ['', 'done', 'in-progress', 'pending', 'wait-input', 'failed'].map(f => {
       const label = f === '' ? 'All' : f;
       const active = this.inboxFilter === f;
-      const isFail = f === 'failed';
-      const style = active
-        ? (isFail ? 'background:#EF444422; border-color:#EF444466; color:#EF4444'
-                  : 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)')
-        : (isFail ? 'color:#EF4444' : '');
+      const color = f === 'failed' ? '#EF4444' : (STATUS_COLORS[f] || '#94A3B8');
+      let style = '';
+      if (f === '') {
+        style = active
+          ? 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)'
+          : '';
+      } else {
+        style = active
+          ? `background:${color}18; border-color:${color}40; color:${color}`
+          : `color:${color}`;
+      }
       return `<button class="btn pill" data-filter="${f}" style="${style}">${esc(label)}</button>`;
     }).join(' ');
 
