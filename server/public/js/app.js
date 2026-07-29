@@ -1515,6 +1515,22 @@ class App {
     for (const [key, v] of Object.entries(PORTAL_DEFAULTS)) merged[key] = { ...v };
     for (const [key, v] of Object.entries(configured)) merged[key] = { ...(merged[key] || {}), ...v };
 
+    // Services are configured with loopback URLs (localhost / 127.0.0.1)
+    // because they run on this host. But the dashboard is usually opened from
+    // another machine, where "localhost" points at the *viewer's* box — not
+    // the server. Rewrite loopback hosts to whatever host the dashboard itself
+    // was loaded from (window.location.hostname) so links resolve to this
+    // server for remote viewers. Port, path and protocol are left untouched.
+    const LOOPBACK = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]']);
+    const rehost = (u) => {
+      try {
+        const p = new URL(u);
+        const here = window.location.hostname;
+        if (here && LOOPBACK.has(p.hostname)) { p.hostname = here; return p.href; }
+        return u;
+      } catch { return u; }
+    };
+
     // Only http(s) URLs are launchable — anything else (javascript:, data:, …)
     // is dropped so an escaped-but-malicious href can never reach the DOM.
     const safeUrl = (u) => {
@@ -1527,7 +1543,7 @@ class App {
       const meta = PORTAL_CATALOG[key] || {};
       return {
         key,
-        url: safeUrl(v.url || ''),
+        url: safeUrl(rehost(v.url || '')),
         label: v.label || meta.label || humanizeKey(key),
         description: v.description || meta.description || '',
         icon: v.icon || meta.icon || 'globe',
