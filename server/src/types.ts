@@ -271,6 +271,16 @@ export interface Task {
   reportPath?: string;
   /** Filenames collected from the task's artifacts dir (downloadable when done). */
   artifacts?: string[];
+  /**
+   * True when the task FINISHED by exhausting its whole fallback chain — every
+   * brain failed verification (result is a "FAILED after N attempt(s) (chain
+   * exhausted)…" summary). Set centrally by {@link Store.completeTask}. The UI
+   * groups these into a red "failed" category and offers a confirm-gated re-run
+   * (POST /api/inbox/:id/rerun) instead of silently listing them as "done".
+   * Input files a person attached to the task live under `inputs/<taskId>/` and
+   * are mirrored onto `context.inputFiles` (filenames) so the brain can read them.
+   */
+  failed?: boolean;
 }
 
 export interface Report {
@@ -298,6 +308,8 @@ export interface DashboardData {
     waitingInput: number;
     inProgress: number;
     completed: number;
+    /** Finished tasks that exhausted their fallback chain (task.failed === true). */
+    failed: number;
   };
   recentReports: number;
   platformStatus: Record<string, boolean>;

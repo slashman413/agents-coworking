@@ -600,9 +600,20 @@ export class Dispatcher {
     }
     lines.push(`# Task: ${task.title}`, ``, task.description, ``);
     const shownCtx = { ...(task.context || {}) } as Record<string, unknown>;
-    for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster']) delete shownCtx[k];
+    // inputFiles is rendered as its own section with readable paths (below), so
+    // drop it from the raw context dump to avoid a redundant bare filename list.
+    for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster', 'inputFiles']) delete shownCtx[k];
     if (Object.keys(shownCtx).length > 0) {
       lines.push(`# Context`, '```json', JSON.stringify(shownCtx, null, 2), '```', '');
+    }
+    // Files the requester attached for this task. They live in a persistent dir;
+    // point the agent at the absolute paths so it can read them regardless of cwd.
+    const inputFiles = Array.isArray(task.context?.inputFiles) ? task.context!.inputFiles as string[] : [];
+    const inputsDir = inputFiles.length ? this.store.inputsPath(task.id) : null;
+    if (inputsDir && inputFiles.length) {
+      lines.push(`# Attached input files`,
+        `The requester attached these files for you to read (absolute paths):`,
+        ...inputFiles.map(f => `- ${join(inputsDir, f)}`), ``);
     }
     const deps = task.context?.dependsOn;
     if (Array.isArray(deps) && deps.length > 0) {

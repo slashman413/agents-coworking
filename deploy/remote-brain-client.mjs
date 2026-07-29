@@ -37,7 +37,7 @@
 // Node 18+ (global fetch). No npm install. Run: `node remote-brain-client.mjs`.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import os from 'node:os';
@@ -145,7 +145,7 @@ async function connect() {
 }
 
 // ── Task execution ───────────────────────────────────────────────────────────
-function buildPrompt(task, artDir) {
+function buildPrompt(task, artDir, inputInfo) {
   const ctx = task.context || {};
   const persona = ctx.persona;   // roster agent's full .md persona (stamped by the dispatcher)
   const role = ctx.agent || ctx.role || 'agent';
@@ -155,9 +155,15 @@ function buildPrompt(task, artDir) {
     : [`You are the "${role}" agent (brain: ${ctx.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
        ``, `# Task: ${task.title}`, ``, task.description, ``];
   // Surface user-supplied context, minus the persona + dispatcher bookkeeping (avoid noise/dupes).
+  // inputFiles is rendered as its own section with local paths (below).
   const shown = { ...ctx };
-  for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster']) delete shown[k];
+  for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster', 'inputFiles']) delete shown[k];
   if (Object.keys(shown).length) lines.push('# Context', '```json', JSON.stringify(shown, null, 2), '```', '');
+  if (inputInfo && inputInfo.files.length) {
+    lines.push('# Attached input files',
+      'The requester attached these files for you to read (downloaded to your machine):',
+      ...inputInfo.files.map(f => `- ${join(inputInfo.dir, f)}`), '');
+  }
   lines.push(
     `If you generate any files (reports, media, data), save them to the directory: ${artDir} (also in $COWORK_ARTIFACTS_DIR) — they are uploaded to the dashboard as downloadable artifacts when the task completes.`,
     'Your final stdout becomes the task result shown on the dashboard.');
@@ -203,15 +209,45 @@ async function uploadArtifacts(taskId, artDir) {
   }
   return n;
 }
+// Download the task's attached input files (files a person uploaded for the brain
+// to read) into a dedicated dir — kept OUT of artDir so they aren't re-uploaded as
+// output artifacts. Returns { dir, files } for buildPrompt to point the model at.
+async function downloadInputs(taskId) {
+  const dir = join(os.tmpdir(), 'cowork-inputs', taskId);
+  let names = [];
+  try {
+    const res = await fetch(`${URL_BASE}/api/inputs/${encodeURIComponent(taskId)}`, {
+      headers: { ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}) }
+    });
+    if (res.ok) names = await res.json();
+  } catch { return { dir, files: [] }; }
+  if (!Array.isArray(names) || !names.length) return { dir, files: [] };
+  mkdirSync(dir, { recursive: true });
+  const files = [];
+  for (const f of names) {
+    try {
+      const r = await fetch(`${URL_BASE}/api/inputs/${encodeURIComponent(taskId)}/${encodeURIComponent(f)}`, {
+        headers: { ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}) }
+      });
+      if (!r.ok) { console.error(`[${AGENT_NAME}] input ${f} download → HTTP ${r.status}`); continue; }
+      writeFileSync(join(dir, f), Buffer.from(await r.arrayBuffer()));
+      files.push(f);
+    } catch (e) { console.error(`[${AGENT_NAME}] input ${f} download failed:`, e.message); }
+  }
+  return { dir, files };
+}
 async function handle(task, agentId) {
   const brain = BRAIN[task.context.brain];
   running.add(task.id);
   const artDir = join(os.tmpdir(), 'cowork-artifacts', task.id);
+  const inputDir = join(os.tmpdir(), 'cowork-inputs', task.id);
   mkdirSync(artDir, { recursive: true });
   console.log(`[${AGENT_NAME}] claimed ${task.id} on ${brain.id} — ${task.title}`);
   try {
     await tool('heartbeat', { agent_id: agentId, status: 'working', current_task: task.title });
-    const { ok, text } = await runModel(brain, buildPrompt(task, artDir), artDir);
+    const inputInfo = await downloadInputs(task.id);
+    if (inputInfo.files.length) console.log(`[${AGENT_NAME}] downloaded ${inputInfo.files.length} input file(s) for ${task.id}`);
+    const { ok, text } = await runModel(brain, buildPrompt(task, artDir, inputInfo), artDir);
     const uploaded = await uploadArtifacts(task.id, artDir);
     if (uploaded) console.log(`[${AGENT_NAME}] uploaded ${uploaded} artifact(s) for ${task.id}`);
     let reportPath;
@@ -227,6 +263,7 @@ async function handle(task, agentId) {
   } finally {
     running.delete(task.id);
     try { rmSync(artDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
+    try { rmSync(inputDir, { recursive: true, force: true }); } catch { /* best-effort cleanup */ }
     await tool('heartbeat', { agent_id: agentId, status: running.size ? 'working' : 'idle' }).catch(() => {});
   }
 }

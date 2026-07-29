@@ -273,6 +273,19 @@ and the client **uploads** each file via `POST /api/artifacts/:taskId/:file`.
 Either way they land in `artifacts/<task-id>/` and become downloadable from the
 Inbox.
 
+**Input files** flow the other way — a person attaches files for the brain to
+**read**. Attach them in the Chat composer (📎) or on any Inbox card ("＋ Attach
+files"); they are stored under `inputs/<task-id>/` and mirrored onto
+`context.inputFiles`. The dispatcher points a **local** brain at their absolute
+paths in the prompt; a **remote** brain client downloads them (`GET /api/inputs/:taskId`)
+before running and lists their local paths in the prompt. Inputs survive a re-run.
+
+**Failed tasks & re-run.** When a task exhausts its whole fallback chain (every
+brain failed verification) it finishes flagged `failed: true`. The Inbox groups
+these under a red **"failed"** filter (kept out of the green "done" count) and
+offers a confirm-gated **↻ Re-run** that resets the task to `pending` from the top
+of its chain (`POST /api/inbox/:id/rerun`) — preserving its brief and attached inputs.
+
 ### Auto-registered brains (clients-capability protocol)
 
 A connecting MCP client DECLARES the brains it can run via the `register_agent`
@@ -521,8 +534,12 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `GET` | `/api/agents` | All active agents (id → name) |
 | `GET` | `/api/connections` | Live MCP clients (heartbeat) + per-brain ran/submitted counters |
 | `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
-| `POST` | `/api/inbox` | Create a new task |
+| `POST` | `/api/inbox` | Create a new task; optional `inputs: [{token,name}]` attaches uploaded files |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
+| `POST` | `/api/inbox/:id/rerun` | Re-queue a FAILED (chain-exhausted) task — reset to pending from the top of its chain, keep its inputs |
+| `GET`/`POST` | `/api/inbox/:id/inputs` | List / attach input files to an existing task (`{inputs:[{token,name}]}`) |
+| `POST` | `/api/uploads?name=<file>` | Stage an uploaded file (raw body) → `{token}` to pass as a task input |
+| `GET` | `/api/inputs/:taskId`, `/:taskId/:file` | List / download a task's attached input files |
 | `GET` | `/api/workflows` / `/api/workflows/:id` | Declarative workflow templates (validated) |
 | `GET` | `/api/workflows-invalid` | Templates that failed to load, with the reason (JSON/validation errors) |
 | `POST` | `/api/workflows/:id/run` | Start a run: expand a DAG template into tasks, or begin an orchestrated run; `{ params, dryRun }` |
@@ -557,7 +574,8 @@ cowork/
 ├── deploy/                  # systemd units, remote-brain client, presets, skills
 ├── inbox/                   # Task queue (JSON files, auto-managed)
 ├── reports/                 # Generated reports (markdown)
-├── artifacts/               # Per-task output files (audio/video/md), downloadable
+├── artifacts/               # Per-task OUTPUT files (audio/video/md), downloadable
+├── inputs/                  # Per-task INPUT files a person attached for the brain (gitignored)
 ├── decisions/               # Decision log
 └── .status/                 # Runtime state (auto-managed)
 ```

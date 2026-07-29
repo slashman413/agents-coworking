@@ -15,6 +15,22 @@ function timeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// A task is "failed" when its whole fallback chain was exhausted. Prefer the
+// explicit flag set by the server; fall back to the result text / rejected status
+// so tasks that finished before the flag existed still categorize correctly.
+function isTaskFailed(t) {
+  return t.failed === true
+    || t.status === 'rejected'
+    || (t.status === 'done' && typeof t.result === 'string' && /^FAILED\b/i.test(t.result.trim()));
+}
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
 const STATUS_COLORS = {
   'wait-input': '#A855F7', pending: '#EAB308', claimed: '#0EA5E9', 'in-progress': '#0EA5E9',
   done: '#22C55E', rejected: '#EF4444',
@@ -79,6 +95,7 @@ class App {
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
     this.chatBusy = false;
+    this.chatAttachments = [];  // File[] staged in the composer, sent as task inputs
     this.chatSessions = this.loadChatSessions();  // persisted recent chat sessions (newest first)
     this.chatSessionId = null;                    // id of the session currently open in the composer
 
@@ -297,7 +314,7 @@ class App {
       <div class="grid-4" style="margin-bottom: var(--space-xl)">
         ${stat('bot', status.activeAgents, 'Active Agents')}
         ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
-               `Open Tasks (${status.inboxSummary.completed} done${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
+               `Open Tasks (${status.inboxSummary.completed - (status.inboxSummary.failed || 0)} done${status.inboxSummary.failed ? `, ${status.inboxSummary.failed} failed` : ''}${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
         ${stat('file-text', status.recentReports, 'Recent Reports')}
         ${stat('users', status.rosterCount, 'Agent Roster')}
       </div>
@@ -417,7 +434,10 @@ class App {
         </div>
         <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px">Each message is dispatched as a task; the reply is its result. Pick a brain (or Auto), optionally a division + roster agent — with no agent you chat the brain directly.</div>
         <div id="chat-msgs" style="flex:1;overflow-y:auto;padding:8px;border:1px solid var(--bg-tertiary);border-radius:12px;background:var(--bg-primary)"></div>
-        <div style="display:flex;gap:8px;margin-top:10px">
+        <div id="chat-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;align-items:flex-end">
+          <input type="file" id="chat-files" multiple style="display:none">
+          <button id="chat-attach" class="btn" title="Attach files for the brain to read" style="padding:0 12px;font-size:1rem" aria-label="Attach files"><i data-lucide="paperclip" style="width:16px;height:16px"></i></button>
           <textarea id="chat-input" rows="2" placeholder="Message…  (Enter to send · Shift+Enter = newline)" style="flex:1;padding:9px 12px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:10px;color:inherit;font:inherit;font-size:0.88rem;resize:vertical"></textarea>
           <button id="chat-send" class="btn btn-primary" style="padding:0 18px">Send</button>
         </div>
@@ -436,12 +456,23 @@ class App {
     agentEl.addEventListener('change', () => { this.chatSel.agent = agentEl.value; });
 
     const input = this.contentEl.querySelector('#chat-input');
-    const doSend = () => { const t = input.value.trim(); if (t && !this.chatBusy) { input.value = ''; this.sendChat(t); } };
+    // Send even with no text if files are attached (e.g. "here, read these").
+    const doSend = () => { const t = input.value.trim(); if ((t || this.chatAttachments.length) && !this.chatBusy) { input.value = ''; this.sendChat(t); } };
     this.contentEl.querySelector('#chat-send').addEventListener('click', doSend);
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
     this.contentEl.querySelector('#chat-new').addEventListener('click', () => this.startNewChat());
 
+    // File attachments (staged client-side; uploaded as task inputs on send).
+    const fileEl = this.contentEl.querySelector('#chat-files');
+    this.contentEl.querySelector('#chat-attach').addEventListener('click', () => fileEl.click());
+    fileEl.addEventListener('change', () => {
+      this.chatAttachments.push(...Array.from(fileEl.files || []));
+      fileEl.value = '';
+      this.renderChatAttachments();
+    });
+
     this.renderChatMessages();
+    this.renderChatAttachments();
     input.focus();
   }
 
@@ -482,7 +513,9 @@ class App {
     this.persistCurrentChat();      // keep the conversation being left behind
     this.chatMessages = [];
     this.chatSessionId = null;
+    this.chatAttachments = [];
     this.renderChatMessages();
+    this.renderChatAttachments();
     this.renderChatRecent();
   }
 
@@ -491,6 +524,7 @@ class App {
     if (!rec) return;
     this.persistCurrentChat();      // save whatever's open before switching away
     this.chatSessionId = rec.id;
+    this.chatAttachments = [];       // drop composer attachments when switching sessions
     this.chatSel = { brain: '', division: '', agent: '', ...(rec.sel || {}) };
     this.chatMessages = (rec.messages || []).map(m => ({ ...m }));
     this.renderChat();              // rebuild selects + transcript from the restored state
@@ -557,6 +591,45 @@ class App {
     box.scrollTop = box.scrollHeight;
   }
 
+  // The strip of staged file chips above the composer (hidden when empty).
+  renderChatAttachments() {
+    const box = this.contentEl.querySelector('#chat-attachments');
+    if (!box) return;
+    if (!this.chatAttachments.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'flex';
+    box.innerHTML = this.chatAttachments.map((f, i) => `
+      <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid var(--bg-tertiary);background:var(--bg-secondary);font-size:0.74rem">
+        <i data-lucide="file" style="width:12px;height:12px"></i>
+        <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span>
+        <span style="color:var(--text-muted)">${fmtBytes(f.size)}</span>
+        <span data-att-rm="${i}" title="Remove" style="cursor:pointer;opacity:.6;font-weight:600">×</span>
+      </span>`).join('');
+    box.querySelectorAll('[data-att-rm]').forEach(el => el.addEventListener('click', () => {
+      this.chatAttachments.splice(Number(el.dataset.attRm), 1);
+      this.renderChatAttachments();
+    }));
+    createIcons();
+  }
+
+  /** Upload staged File objects; returns [{token,name}] for a task's `inputs`.
+   *  Raw fetch — the JSON-only APIClient can't send binary bodies. */
+  async uploadInputFiles(files) {
+    const out = [];
+    for (const f of files) {
+      const res = await fetch(`/api/uploads?name=${encodeURIComponent(f.name)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
+      });
+      if (!res.ok) {
+        let msg = `upload failed (${res.status})`;
+        try { msg = (await res.json()).error || msg; } catch { /* ignore */ }
+        throw new Error(`${f.name}: ${msg}`);
+      }
+      const r = await res.json();
+      out.push({ token: r.token, name: r.name });
+    }
+    return out;
+  }
+
   buildChatDescription() {
     const done = this.chatMessages.filter(m => !m.pending);
     if (done.length <= 1) return done[done.length - 1]?.content || '';
@@ -570,23 +643,34 @@ class App {
     if (brain) context.brain = brain;
     if (agent) context.agent = agent; else if (division) context.division = division;
     const target = agent || (division ? `division:${division}` : (brain || 'auto'));
-    this.chatMessages.push({ role: 'user', content: text });
+    // Take (and clear) the staged attachments for this send.
+    const attachments = this.chatAttachments;
+    this.chatAttachments = [];
+    this.renderChatAttachments();
+    const attachNote = attachments.length ? `📎 ${attachments.map(f => f.name).join(', ')}` : '';
+    const userContent = [text, attachNote].filter(Boolean).join('\n');
+    this.chatMessages.push({ role: 'user', content: userContent });
     const ph = { role: 'assistant', content: '', pending: true, meta: `↳ ${target}${brain && agent ? ' · ' + brain : ''}` };
     this.chatMessages.push(ph);
     this.renderChatMessages();
     try {
-      const task = await this.api.post('/inbox', {
-        title: text.slice(0, 60) || 'chat',
+      // Upload attachments first so the created task carries them as inputs.
+      const inputs = attachments.length ? await this.uploadInputFiles(attachments) : [];
+      const body = {
+        title: text.slice(0, 60) || (attachments.length ? `Review ${attachments.length} file(s)` : 'chat'),
         description: this.buildChatDescription(),
         from: { platform: 'chat', agent: 'dashboard' },
         context, tags: ['chat']
-      });
+      };
+      if (inputs.length) body.inputs = inputs;
+      const task = await this.api.post('/inbox', body);
       const done = await this.pollChatTask(task.id);
       const c = done.context || {};
       const ranAgent = c.ranAgent ? (c.ranDivision ? `${c.ranDivision}/${c.ranAgent}` : c.ranAgent) : '';
       const ranBrain = c.ranBrain || c.brain || brain || '';
       ph.pending = false;
-      ph.content = done.status === 'done' ? (done.result || '(no output)')
+      ph.content = done.status === 'done'
+        ? (done.failed ? `⚠️ ${done.result || 'Task failed.'}` : (done.result || '(no output)'))
         : `⚠️ task ${done.status}${done.result ? ': ' + done.result : ''}`;
       ph.meta = [ranAgent, ranBrain].filter(Boolean).join(' · ') || null;
     } catch (e) {
@@ -668,12 +752,24 @@ class App {
   }
 
   async renderInbox() {
-    const q = this.inboxFilter ? `?status=${this.inboxFilter}&limit=100` : '?limit=100';
-    const [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
-    const pills = ['', 'wait-input', 'pending', 'in-progress', 'done'].map(f => {
+    const filter = this.inboxFilter;
+    // `failed` is a pseudo-status — failed tasks are stored as `done` — so fetch
+    // everything and filter client-side. The `done` filter then EXCLUDES failed
+    // ones so successes stay green and failures live only under `failed`.
+    const q = (filter && filter !== 'failed') ? `?status=${filter}&limit=100` : '?limit=100';
+    let [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
+    if (filter === 'failed') tasks = tasks.filter(isTaskFailed);
+    else if (filter === 'done') tasks = tasks.filter(t => !isTaskFailed(t));
+
+    const pills = ['', 'wait-input', 'pending', 'in-progress', 'done', 'failed'].map(f => {
       const label = f === '' ? 'All' : f;
       const active = this.inboxFilter === f;
-      return `<button class="btn pill" data-filter="${f}" style="${active ? 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)' : ''}">${esc(label)}</button>`;
+      const isFail = f === 'failed';
+      const style = active
+        ? (isFail ? 'background:#EF444422; border-color:#EF444466; color:#EF4444'
+                  : 'background:var(--bg-tertiary); border-color:var(--border-hover); color:var(--text-primary)')
+        : (isFail ? 'color:#EF4444' : '');
+      return `<button class="btn pill" data-filter="${f}" style="${style}">${esc(label)}</button>`;
     }).join(' ');
 
     const rows = tasks.length ? tasks.map(t => {
@@ -685,25 +781,38 @@ class App {
       // Fallback trail: brains that failed verification and were handed over.
       const failedBrains = Array.isArray(c.failedBrains) ? c.failedBrains : [];
       const arts = Array.isArray(t.artifacts) ? t.artifacts : [];
+      const inputs = Array.isArray(c.inputFiles) ? c.inputFiles : [];
+      const failed = isTaskFailed(t);
+      // Files can be attached while a task is still schedulable, or to a failed one
+      // (attach context, then re-run).
+      const canAttach = ['pending', 'wait-input'].includes(t.status) || failed;
       return `
-      <div class="card task-card" style="margin-bottom: var(--space-md)" data-task="${esc(t.id)}" data-title="${esc((t.title || '').toLowerCase())}">
+      <div class="card task-card" style="margin-bottom: var(--space-md)${failed ? ';border-left:3px solid #EF4444' : ''}" data-task="${esc(t.id)}" data-title="${esc((t.title || '').toLowerCase())}">
         <div class="task-card-header">
           <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-            ${badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
+            ${failed ? badge('failed', '#EF4444') : badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
             ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
             ${brainLabel ? badge(brainLabel, BRAIN_COLOR) : ''}
             ${failedBrains.map(f => badge(`✗ ${f.brain}`, '#EF4444')).join('')}
             ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
             ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
+            ${inputs.length ? badge(`📎 ${inputs.length}`, '#0EA5E9') : ''}
             <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
           </div>
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
+            ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" title="Re-run this task from the top of its brain chain"
+              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
             <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
-              style="font-size:0.72rem;margin-left:8px;padding:2px 7px">✕</button></span>
+              style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
         </div>
         ${arts.length ? `<div class="task-artifacts" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
           <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Artifacts</span>
           ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
+        ${(inputs.length || canAttach) ? `<div class="task-inputs" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
+          <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Inputs</span>
+          ${inputs.map(f => `<a href="/api/inputs/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="paperclip" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}
+          ${canAttach ? `<input type="file" data-attach-files="${esc(t.id)}" multiple style="display:none">
+          <button class="btn" data-attach-input="${esc(t.id)}" title="Attach files for the brain to read" style="font-size:0.75rem;margin:0">＋ Attach files</button>` : ''}</div>` : ''}
         <div class="task-detail">
           ${mdViewer(t.description, 'DESCRIPTION')}
           ${this.interactionBlock(t)}
@@ -749,6 +858,42 @@ class App {
         try {
           const r = await this.api.del(`/inbox/${encodeURIComponent(id)}`);
           this.toast('task deleted', `${r.reports} report(s)${r.artifacts ? ' + artifacts' : ''} removed`);
+          this.renderInbox();
+        } catch (err) { this.toast('error', err.message); }
+      }));
+
+    // Re-run a failed task (confirm-gated) — reset to pending, re-dispatch.
+    this.contentEl.querySelectorAll('[data-rerun-task]').forEach(b =>
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = b.dataset.rerunTask;
+        const title = b.closest('[data-task]')?.dataset.title || id.slice(0, 8);
+        if (!confirm(`Re-run this failed task?\n\n${title}\n\nIt will be reset to pending and dispatched again from the top of its brain chain.`)) return;
+        b.disabled = true;
+        try {
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/rerun`);
+          this.toast('re-running', 'Task reset to pending and re-queued.');
+          this.renderInbox();
+        } catch (err) { this.toast('error', err.message); b.disabled = false; }
+      }));
+
+    // Attach input files to an existing task (upload → append to context.inputFiles).
+    this.contentEl.querySelectorAll('[data-attach-input]').forEach(b =>
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const inp = this.contentEl.querySelector(`[data-attach-files="${CSS.escape(b.dataset.attachInput)}"]`);
+        if (inp) inp.click();
+      }));
+    this.contentEl.querySelectorAll('[data-attach-files]').forEach(inp =>
+      inp.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const id = inp.dataset.attachFiles;
+        const files = Array.from(inp.files || []);
+        if (!files.length) return;
+        try {
+          const attached = await this.uploadInputFiles(files);
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/inputs`, { inputs: attached });
+          this.toast('files attached', `${attached.length} file(s) added — the brain will read them.`);
           this.renderInbox();
         } catch (err) { this.toast('error', err.message); }
       }));

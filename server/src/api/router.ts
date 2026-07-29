@@ -52,6 +52,9 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         context: body.context,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
         interaction: body.interaction && Array.isArray(body.interaction.fields) ? body.interaction : undefined
+      }, {
+        // Staged input uploads (from POST /api/uploads) the brain should read.
+        inputs: Array.isArray(body.inputs) ? body.inputs : undefined
       });
       res.status(201).json(task);
     } catch (e: any) {
@@ -97,6 +100,39 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         dryRun: !!dryRun
       }));
     } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Re-run a FAILED (chain-exhausted) or rejected task — reset it to pending from
+  // the top of its chain, keeping its brief + attached inputs. The dashboard gates
+  // this behind an explicit user confirmation (categorize-failed → confirm re-run).
+  router.post('/inbox/:id/rerun', (req, res) => {
+    try {
+      const task = store.rerunTask(req.params.id);
+      if (!task) return res.status(404).json({ error: 'Task not found or not in a re-runnable (failed) state' });
+      res.json(task);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // Attach staged input uploads to an EXISTING task (union onto context.inputFiles
+  // so the brain reads them). Body: { inputs: [{ token, name }] } — tokens come
+  // from POST /api/uploads.
+  router.post('/inbox/:id/inputs', (req, res) => {
+    try {
+      const inputs = req.body?.inputs;
+      if (!Array.isArray(inputs) || !inputs.length) throw new Error('inputs ([{token,name}]) is required');
+      const task = store.appendInputs(req.params.id, inputs);
+      if (!task) return res.status(404).json({ error: 'Task not found' });
+      res.json(task);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  // List a task's attached input files (downloadable via the index.ts route).
+  router.get('/inbox/:id/inputs', (req, res) => {
+    res.json(store.listInputs(req.params.id));
   });
 
   // Submit a person's answers to a task's interaction (questions/checklist).

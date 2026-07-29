@@ -9,6 +9,7 @@ decisions/*.md
 server/hermes-*.md
 docs/backlink-*.md
 artifacts/
+inputs/
 workflow-runs/
 
 # Scratch/debug scripts — the server is TypeScript; stray .py files are local-only

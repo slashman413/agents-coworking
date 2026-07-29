@@ -207,6 +207,27 @@ async function main() {
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
+  // ── Task INPUT files (a person attaches files for the brain to read) ───────
+  // Staging upload: raw binary body, filename via ?name= (or X-Upload-Filename).
+  // Returns a token the client passes to POST /api/inbox ({inputs:[{token,name}]})
+  // or POST /api/inbox/:id/inputs. Staged before the task exists so the chat
+  // create-with-inputs flow is race-free.
+  app.post('/api/uploads', express.raw({ type: '*/*', limit: '256mb' }), (req, res) => {
+    try {
+      const name = (req.query.name as string) || (req.headers['x-upload-filename'] as string) || 'file';
+      const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+      const out = store.stageUpload(decodeURIComponent(name), body);
+      res.status(201).json(out);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+  // List / download a task's attached input files (path-guarded in the store).
+  app.get('/api/inputs/:taskId', (req, res) => res.json(store.listInputs(req.params.taskId)));
+  app.get('/api/inputs/:taskId/:file', (req, res) => {
+    const file = store.inputFilePath(req.params.taskId, req.params.file);
+    if (!file) return res.status(404).json({ error: 'not found' });
+    res.download(file);
+  });
+
   // ── Agents registry (worker profiles with an ordered brain chain) ──────────
   app.get('/api/agents-config', (_req, res) => res.json(config.orchestration.agents || {}));
 

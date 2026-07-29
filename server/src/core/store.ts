@@ -163,7 +163,118 @@ export class Store {
     }
   }
 
-  public createTask(params: Omit<Task, 'id' | 'status' | 'createdAt'>): Task {
+  // ── Task input files (attached by a person for the brain to read) ──────────
+  // Layout mirrors artifacts/: <repo>/inputs/<taskId>/<file> for a task's inputs,
+  // plus <repo>/inputs/_staging/<token>/<file> for uploads that arrive BEFORE
+  // their task exists (chat composer). Gitignored. Materializing staged uploads
+  // into the task dir at creation time keeps create-with-inputs race-free — the
+  // task is only visible as `pending` (claimable) once its inputs are present.
+
+  /** Repo-level inputs root (sibling of reports/ and artifacts/). */
+  private inputsRoot(): string {
+    return path.resolve(this.config.paths.reports, '..', 'inputs');
+  }
+  private inputsDir(taskId: string): string {
+    return path.join(this.inputsRoot(), path.basename(taskId));
+  }
+
+  /** Best-effort GC of staging slots older than an hour (never-claimed uploads). */
+  private gcStaging(): void {
+    const staging = path.join(this.inputsRoot(), '_staging');
+    if (!fs.existsSync(staging)) return;
+    const cutoff = Date.now() - 3_600_000;
+    for (const slot of fs.readdirSync(staging)) {
+      const p = path.join(staging, slot);
+      try { if (fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Persist an uploaded file to a staging slot and return a `token` the caller
+   * passes back when it creates the task (createTask) or attaches to an existing
+   * one (appendInputs). Path-guarded; rejects empty uploads.
+   */
+  public stageUpload(name: string, data: Buffer): { token: string; name: string; bytes: number } {
+    const fileName = path.basename(String(name || '')).trim();
+    if (!fileName || fileName === '.' || fileName === '..') throw new Error('invalid filename');
+    if (!data || !data.length) throw new Error('empty upload');
+    this.gcStaging();
+    const token = uuidv4();
+    const dir = path.join(this.inputsRoot(), '_staging', token);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, fileName), data);
+    return { token, name: fileName, bytes: data.length };
+  }
+
+  /** Move staged uploads (by token) into the task's inputs dir; returns the
+   *  stored filenames. Skips tokens whose slot is gone; collision-suffixes names. */
+  private materializeInputs(taskId: string, inputs: Array<{ token?: string; name?: string }>): string[] {
+    const dir = this.inputsDir(taskId);
+    const stored: string[] = [];
+    for (const it of inputs) {
+      const token = String(it?.token || '');
+      if (!token || /[\\/]/.test(token)) continue;
+      const slot = path.join(this.inputsRoot(), '_staging', path.basename(token));
+      if (!fs.existsSync(slot)) continue;
+      let src: string | undefined;
+      try { src = fs.readdirSync(slot).find(f => { try { return fs.statSync(path.join(slot, f)).isFile(); } catch { return false; } }); } catch { continue; }
+      if (!src) continue;
+      fs.mkdirSync(dir, { recursive: true });
+      const original = path.basename(it?.name || src);
+      let name = original, dest = path.join(dir, name);
+      for (let n = 1; fs.existsSync(dest); n++) {
+        const ext = path.extname(original);
+        name = `${path.basename(original, ext)}-${n}${ext}`;
+        dest = path.join(dir, name);
+      }
+      try { fs.renameSync(path.join(slot, src), dest); }
+      catch { try { fs.copyFileSync(path.join(slot, src), dest); } catch { continue; } }
+      try { fs.rmSync(slot, { recursive: true, force: true }); } catch { /* ignore */ }
+      stored.push(name);
+    }
+    return stored;
+  }
+
+  /** Attach more input files to an existing task (union onto context.inputFiles). */
+  public appendInputs(taskId: string, inputs: Array<{ token?: string; name?: string }>): Task | null {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    const names = this.materializeInputs(task.id, Array.isArray(inputs) ? inputs : []);
+    if (names.length) {
+      const existing = Array.isArray(task.context?.inputFiles) ? task.context!.inputFiles as string[] : [];
+      task.context = { ...(task.context || {}), inputFiles: [...new Set([...existing, ...names])] };
+      this.saveTask(task);
+    }
+    return task;
+  }
+
+  /** Filenames of a task's attached input files (downloadable). */
+  public listInputs(taskId: string): string[] {
+    const task = this.getTask(taskId);
+    const dir = this.inputsDir(task?.id || taskId);
+    if (!fs.existsSync(dir)) return [];
+    try { return fs.readdirSync(dir).filter(f => { try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; } }); }
+    catch { return []; }
+  }
+
+  /** Absolute path of one input file (path-guarded), or null if absent. */
+  public inputFilePath(taskId: string, file: string): string | null {
+    const task = this.getTask(taskId);
+    const dir = this.inputsDir(task?.id || taskId);
+    const p = path.join(dir, path.basename(file));
+    if (!p.startsWith(dir + path.sep) || !fs.existsSync(p)) return null;
+    return p;
+  }
+
+  /** Absolute path of a task's inputs DIR (for the local dispatcher to point the
+   *  agent at), or null when the task has no attached inputs. */
+  public inputsPath(taskId: string): string | null {
+    const task = this.getTask(taskId);
+    const dir = this.inputsDir(task?.id || taskId);
+    return fs.existsSync(dir) ? dir : null;
+  }
+
+  public createTask(params: Omit<Task, 'id' | 'status' | 'createdAt'>, opts?: { inputs?: Array<{ token?: string; name?: string }> }): Task {
     const id = uuidv4();
     const task: Task = {
       ...params,
@@ -171,6 +282,16 @@ export class Store {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
+    // Materialize any staged input uploads into inputs/<id>/ and record the stored
+    // filenames on context.inputFiles BEFORE the task is written/emitted, so it is
+    // never visible as `pending` (claimable) without its inputs already present.
+    if (opts?.inputs && opts.inputs.length) {
+      const names = this.materializeInputs(id, opts.inputs);
+      if (names.length) {
+        const existing = Array.isArray(task.context?.inputFiles) ? task.context!.inputFiles as string[] : [];
+        task.context = { ...(task.context || {}), inputFiles: [...new Set([...existing, ...names])] };
+      }
+    }
     // A task shipped with an unanswered interaction packet is parked on the
     // `wait-input` category — held OUT of the pending pool so the dispatcher never
     // schedules or reassigns it. submitInteraction() releases it to `pending`.
@@ -250,11 +371,59 @@ export class Store {
     task.completedAt = new Date().toISOString();
     if (result) task.result = result;
     if (params.reportPath) task.reportPath = params.reportPath;
-    
+    // Flag a chain-exhausted failure (every fallback brain failed verification) so
+    // the UI groups it into the red "failed" category with a confirm-gated re-run,
+    // rather than listing it as a green success. Covers BOTH completion paths — the
+    // dispatcher's own internal completion and a remote brain's guarded completion
+    // — because both finalise here with the same "FAILED after N attempt(s)…" text.
+    task.failed = (typeof result === 'string' && /^FAILED after \d+ attempt/i.test(result.trim())) || undefined;
+
     const taskPath = path.join(this.config.paths.inbox, `${task.id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
-    
+
     this.eventBus.emitTaskCompleted(task);
+    return task;
+  }
+
+  /**
+   * Re-queue a FAILED (chain-exhausted) or rejected task for another run. Resets
+   * it to `pending` from the TOP of its chain: clears the failed flag, the prior
+   * result/claim/completion, and the scheduling bookkeeping (attempts / dispatched /
+   * failedBrains / dispatcher-published brain pin), while preserving the brief, the
+   * agent / division / user brain pin, and any attached input files. The UI gates
+   * this behind an explicit confirmation. Returns null if the task is gone or is
+   * not in a re-runnable (finished-failed) state.
+   */
+  public rerunTask(taskId: string): Task | null {
+    const task = this.getTask(taskId);
+    if (!task) return null;
+    const looksFailed = task.failed === true
+      || task.status === 'rejected'
+      || (task.status === 'done' && typeof task.result === 'string' && /^FAILED\b/i.test(task.result.trim()));
+    if (!looksFailed) return null;
+
+    const ctx: Record<string, any> = { ...(task.context || {}) };
+    delete ctx.failedBrains;
+    // A user brain pin (context.brain set WITHOUT brainAuto) is intentional — keep
+    // it so the re-run targets the same brain. A dispatcher-published chain pin
+    // (brainAuto) is transient — drop it so routing restarts at the top rung.
+    if (ctx.brainAuto) delete ctx.brain;
+    delete ctx.brainAuto;
+    ctx.attempts = 0;
+    ctx.dispatched = false;
+    delete ctx.remoteWaitSince;
+    delete ctx.ranAgent; delete ctx.ranDivision; delete ctx.ranBrain; delete ctx.isRoster;
+
+    task.context = ctx;
+    task.status = 'pending';
+    delete task.failed;
+    delete task.result;
+    delete task.claimedAt;
+    delete task.claimedBy;
+    delete task.completedAt;
+    delete task.reportPath;
+    this.saveTask(task);
+    this.eventBus.emitTaskCreated(task);   // nudge live dashboards to refresh
     return task;
   }
 
@@ -291,6 +460,12 @@ export class Store {
     let artifacts = false;
     if (fs.existsSync(artDir)) {
       try { fs.rmSync(artDir, { recursive: true, force: true }); artifacts = true; } catch { /* ignore */ }
+    }
+
+    // Input files dir (sibling of artifacts/, keyed by task id).
+    const inDir = path.resolve(reportsDir, '..', 'inputs', fullId);
+    if (fs.existsSync(inDir)) {
+      try { fs.rmSync(inDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     fs.rmSync(path.join(this.config.paths.inbox, `${fullId}.json`), { force: true });
@@ -623,6 +798,7 @@ export class Store {
     const waitingInput = tasks.filter(t => t.status === 'wait-input').length;
     const inProgress = tasks.filter(t => t.status === 'in-progress' || t.status === 'claimed').length;
     const completed = tasks.filter(t => t.status === 'done').length;
+    const failed = tasks.filter(t => t.status === 'done' && (t as any).failed === true).length;
     
     const recentReports = this.listReports({ limit: 5 }).length;
     
@@ -637,7 +813,8 @@ export class Store {
         pending,
         waitingInput,
         inProgress,
-        completed
+        completed,
+        failed
       },
       recentReports,
       platformStatus,
