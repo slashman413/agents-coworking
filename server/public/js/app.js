@@ -625,6 +625,9 @@ class App {
     const fieldHtml = (f) => {
       const type = f.type || 'text';
       const req = f.required ? ' <span style="color:#EF4444">*</span>' : '';
+      // Marks required non-checkbox controls so the submit handler can validate
+      // them client-side (and match the server's required-field rule).
+      const reqAttr = f.required ? ' data-required="1"' : '';
       // Read-only rendering once submitted.
       if (submitted) {
         const v = f.value;
@@ -635,12 +638,12 @@ class App {
         </div>`;
       }
       const control = type === 'textarea'
-        ? `<textarea data-field="${esc(f.id)}" data-ftype="textarea" rows="3" placeholder="${esc(f.placeholder || '')}" style="${inp};resize:vertical"></textarea>`
+        ? `<textarea data-field="${esc(f.id)}" data-ftype="textarea"${reqAttr} rows="3" placeholder="${esc(f.placeholder || '')}" style="${inp};resize:vertical"></textarea>`
         : type === 'checkbox'
         ? `<label style="display:inline-flex;align-items:center;gap:8px;font-size:0.88rem;cursor:pointer"><input type="checkbox" data-field="${esc(f.id)}" data-ftype="checkbox"> ${esc(f.label)}${req}</label>`
         : type === 'select'
-        ? `<select data-field="${esc(f.id)}" data-ftype="select" style="${inp}"><option value="">— choose —</option>${(f.options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
-        : `<input type="text" data-field="${esc(f.id)}" data-ftype="text" placeholder="${esc(f.placeholder || '')}" style="${inp}">`;
+        ? `<select data-field="${esc(f.id)}" data-ftype="select"${reqAttr} style="${inp}"><option value="">— choose —</option>${(f.options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`
+        : `<input type="text" data-field="${esc(f.id)}" data-ftype="text"${reqAttr} placeholder="${esc(f.placeholder || '')}" style="${inp}">`;
       // Checkbox carries its own inline label; others get a label above.
       return type === 'checkbox'
         ? `<div style="margin:10px 0">${control}</div>`
@@ -761,6 +764,17 @@ class App {
         box.querySelectorAll('[data-field]').forEach(el => {
           responses[el.dataset.field] = el.dataset.ftype === 'checkbox' ? el.checked : el.value;
         });
+        // Catch blank required answers here so the user gets an inline pointer at
+        // the offending field instead of an opaque server 400. Checkboxes are
+        // never "required-empty" (mirrors the rule in store.submitInteraction).
+        const missing = [...box.querySelectorAll('[data-field][data-required="1"]:not([data-ftype="checkbox"])')]
+          .find(el => !String(el.value ?? '').trim());
+        if (missing) {
+          missing.focus();
+          missing.style.borderColor = '#EF4444';
+          this.toast('answer required', 'Please fill in the required field before submitting.');
+          return;
+        }
         const submittedBy = box.querySelector('[data-ix-by]')?.value.trim() || undefined;
         btn.disabled = true;
         try {

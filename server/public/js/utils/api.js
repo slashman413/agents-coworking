@@ -14,7 +14,18 @@ class APIClient {
       });
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+        // Surface the server's structured error. Endpoints reject with a JSON
+        // body like { error: "Field \"X\" is required" }; without this the caller
+        // only ever sees an opaque "API Error: 400 Bad Request" and can't tell
+        // why the request failed (e.g. a blank required interaction field).
+        let detail = '';
+        try {
+          const body = await response.clone().json();
+          detail = body?.error || body?.message || '';
+        } catch {
+          try { detail = (await response.clone().text()).trim(); } catch { /* ignore */ }
+        }
+        throw new Error(detail || `API Error: ${response.status} ${response.statusText}`);
       }
 
       return await response.json();
