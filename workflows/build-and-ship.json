@@ -1,0 +1,42 @@
+{
+  "id": "build-and-ship",
+  "name": "Build & Ship (engineers → GitHub + GH Actions)",
+  "description": "Take a product spec and actually build the product: architect it, dispatch engineers to write real code, wire a GitHub Actions CI pipeline, code-review it, push, and verify the pipeline is green. This is the 'executioners build the real product and push to GitHub with GHAs' pipeline as a standalone run. The build step hands off to the orchestrator, which dispatches the real engineering jobs to the roster; every role is pinned to an engineering agent so brain fallback chains stay UI-controlled.",
+  "params": ["spec"],
+  "steps": [
+    {
+      "key": "architecture",
+      "title": "Architect the build",
+      "description": "Turn this spec into a build-ready technical plan: component decomposition, data model, stack choice with a trade-off on the riskiest decision, the CI/CD gates GitHub Actions must enforce (lint, typecheck, test, build), and a build sequence of shippable increments. Spec: \"{{spec}}\". Output as markdown.",
+      "agent": "engineering-backend-architect"
+    },
+    {
+      "key": "build",
+      "title": "Dispatch engineers to build the real product",
+      "description": "You are managing the build. Take the architecture plan provided and ACTUALLY dispatch each increment as a real subtask to the engineering roster via the Cowork REST API — one POST per increment — wiring context.dependsOn so each job receives the outputs of the increments it builds on. The work must produce REAL running code committed to a git repo, plus a .github/workflows CI pipeline that lints/tests/builds on push. Include a final integration job that dependsOn all increments. After dispatching, output a manifest: increment -> task id -> dependencies -> where the code lives. Leave routing to the engineering division so brain chains stay UI-controlled.",
+      "agent": "orchestrator",
+      "dependsOn": ["architecture"]
+    },
+    {
+      "key": "ci",
+      "title": "Wire the GitHub Actions pipeline",
+      "description": "Using the architecture plan and the build manifest provided, author the GitHub Actions workflow(s) for this product: jobs for lint, typecheck, test, and build triggered on push and pull_request, matrix where it helps, dependency caching, and branch-protection-friendly required checks. Output the workflow YAML plus a one-paragraph explanation of what each job gates.",
+      "agent": "engineering-devops-automator",
+      "dependsOn": ["build"]
+    },
+    {
+      "key": "review",
+      "title": "Code review the build",
+      "description": "Review the delivered code and CI pipeline provided against the spec and the architecture plan. Check correctness, security, error handling, test coverage, and that the GH Actions gates actually block bad merges. List concrete, prioritized findings (blocker / should-fix / nit) with the file and the fix. Output as markdown.",
+      "agent": "engineering-code-reviewer",
+      "dependsOn": ["build", "ci"]
+    },
+    {
+      "key": "push-verify",
+      "title": "Push and verify the pipeline is green",
+      "description": "Take the reviewed code + CI pipeline provided, apply the blocker/should-fix findings, then push the branch and VERIFY: confirm the GitHub Actions run completed and every required check is green. If anything is red, state exactly what failed and what remains. Do not claim success without the pipeline result as evidence. Output a short release note: what shipped, the commit/branch, the CI status, and any residual follow-ups.",
+      "agent": "engineering-git-workflow-master",
+      "dependsOn": ["review"]
+    }
+  ]
+}

@@ -524,6 +524,35 @@ The engine (validation, cycle detection, topological expansion, DAG wiring, run
 reconstruction, and the orchestrated decision loop) is covered by a test suite —
 `cd server && npm test`.
 
+### Shipped company workflows
+
+The `workflows/` directory ships a set of realistic, cross-functional company
+pipelines. Each step pins a **`division`** or **`agent`** (never a `brain`), so
+the brain **fallback chain for every role stays editable from the dashboard's
+Agents view** (`orchestration.agents[*].brains` for special agents;
+`divisionChains[*]` / `defaultChain` for roster agents) — change who runs a step
+without touching the template.
+
+| Workflow | Mode | What it does |
+|----------|------|--------------|
+| `idea-to-launch` | dag | The flagship. CEO brief → market research + perspectives → PM spec → architecture → **engineers build the real product & push to GitHub with GH Actions** → marketing promos + email auto-replies → sales enablement → finance model → Chief-of-Staff go/no-go review. `params: idea` |
+| `product-spec` | dag | PM writes a build-ready PRD, fed by user research + engineering feasibility, then cut into a shippable first sprint. `params: idea` |
+| `build-and-ship` | dag | Take a spec → architect → dispatch engineers to build real code → wire the GitHub Actions CI pipeline → code review → push & verify the pipeline is green. `params: spec` |
+| `feedback-to-roadmap` | dag | Raw feedback from an employee/customer → triage → synthesize into themes → PM initiatives → prioritized roadmap → dispatch the "Now" items as real work. `params: feedback` |
+| `gtm-campaign` | dag | Marketing + sales wire a launch: offer & promo angles → email sequences **+ inbound auto-reply rules** → content → sales enablement → success metrics. `params: product` |
+| `finance-close` | dag | The accounting cycle: bookkeeper reconciles → FP&A variance → forward model → CFO sign-off + board summary. `params: period` |
+| `expand-perspectives` | dag | Researchers deep-dive an idea from four independent lenses (first-principles, precedent, contrarian, second-order) in parallel, then synthesize a decision-ready perspective map. `params: idea` |
+| `adaptive-research` | orchestrated | Adaptive deep research — the orchestrator drills only where the goal needs it. `params: question` |
+| `plan-execution` | orchestrated | Turns a plan into dispatched jobs and drives them to verified completion. `params: plan` |
+| `content-pipeline` | dag | Research → draft → review → publish. `params: topic` |
+| `product-brief` | dag | Market + tech + risk fan-out → one-page go/no-go brief. `params: idea` |
+
+```bash
+# Run the flagship end-to-end company workflow:
+curl -s -X POST localhost:6868/api/workflows/idea-to-launch/run \
+  -H 'content-type: application/json' -d '{"params":{"idea":"a self-hosted receipts scanner"}}'
+```
+
 ## REST API
 
 The Web UI uses these endpoints (also available for scripts/integrations):

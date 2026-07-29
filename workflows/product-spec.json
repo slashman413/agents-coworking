@@ -1,0 +1,34 @@
+{
+  "id": "product-spec",
+  "name": "Product Spec (PM-led PRD)",
+  "description": "A product manager writes a detailed, build-ready PRD — fed by parallel user research and an engineering feasibility read, then sharpened by a sprint-scoping pass. Use this when you already know you want the thing and need the spec engineers can build against. Fan-in on the PM, then a scoping refinement. All roles pinned to product/engineering agents; brain chains remain editable in the UI.",
+  "params": ["idea"],
+  "steps": [
+    {
+      "key": "user-research",
+      "title": "User & problem research: {{idea}}",
+      "description": "Research the users and the real problem behind \"{{idea}}\": who has this problem, how they solve it today, the top 3 unmet needs, and the 5-8 concrete user stories that matter most. Cite evidence or clearly mark assumptions. Output as markdown.",
+      "agent": "product-trend-researcher"
+    },
+    {
+      "key": "feasibility",
+      "title": "Engineering feasibility read: {{idea}}",
+      "description": "Give a fast engineering feasibility read on \"{{idea}}\": the core components, the hardest technical risk, external dependencies/APIs required, a rough effort tier (S/M/L) per component, and anything that would materially change scope. Output as markdown.",
+      "division": "engineering"
+    },
+    {
+      "key": "prd",
+      "title": "Write the PRD: {{idea}}",
+      "description": "You are the Product Manager. Using the user research and the engineering feasibility read provided, write the detailed PRD for \"{{idea}}\": problem statement, target users & prioritized user stories, MVP scope with an explicit OUT-of-scope list, functional + non-functional requirements, success metrics & instrumentation, key edge cases, dependencies, and open questions with owners. Be diplomatically ruthless about focus. Output the full PRD as markdown.",
+      "agent": "product-manager",
+      "dependsOn": ["user-research", "feasibility"]
+    },
+    {
+      "key": "scope",
+      "title": "Scope into a shippable first sprint: {{idea}}",
+      "description": "Take the PRD provided and cut it into a shippable first sprint for \"{{idea}}\": the smallest slice that delivers real user value, an ordered backlog of tickets each with a one-line acceptance criterion, the explicit cut list (what's deferred and why), and the top risk to the sprint. Output as markdown.",
+      "agent": "product-sprint-prioritizer",
+      "dependsOn": ["prd"]
+    }
+  ]
+}
