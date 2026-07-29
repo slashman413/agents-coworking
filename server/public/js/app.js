@@ -417,29 +417,37 @@ class App {
   async renderChat() {
     const [brains, divisions] = await Promise.all([this.api.get('/brains'), this.api.get('/roster-divisions')]);
     this._chatDivisions = divisions;
-    const sel = 'padding:6px 8px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.8rem';
+    const sel = 'padding:6px 10px;background:transparent;border:none;border-radius:12px;color:var(--text-secondary);font-size:0.8rem;cursor:pointer;outline:none;font-weight:500;transition:background 0.2s;';
     const brainOpts = ['<option value="">🧠 Auto (route via chain)</option>']
       .concat(Object.keys(brains).sort().map(b => `<option value="${esc(b)}">${esc(b)}</option>`)).join('');
     const divOpts = ['<option value="">— any division —</option>']
       .concat(Object.entries(divisions).sort().map(([d, i]) => `<option value="${esc(d)}">${esc(i.label || d)} (${i.agents.length})</option>`)).join('');
 
     this.contentEl.innerHTML = `
-      <div style="display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:420px">
+      <div style="display:flex;flex-direction:column;height:calc(100vh - 130px);min-height:420px;position:relative">
         ${this.chatRecentBar()}
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
-          <select id="chat-brain" style="${sel}">${brainOpts}</select>
-          <select id="chat-div" style="${sel}">${divOpts}</select>
-          <select id="chat-agent" style="${sel}"><option value="">— none (chat brain directly) —</option></select>
-          <button id="chat-new" class="btn" style="font-size:0.78rem;margin-left:auto">＋ New chat</button>
-        </div>
-        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px">Each message is dispatched as a task; the reply is its result. Pick a brain (or Auto), optionally a division + roster agent — with no agent you chat the brain directly.</div>
-        <div id="chat-msgs" style="flex:1;overflow-y:auto;padding:8px;border:1px solid var(--bg-tertiary);border-radius:12px;background:var(--bg-primary)"></div>
-        <div id="chat-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
-        <div style="display:flex;gap:8px;margin-top:10px;align-items:flex-end">
-          <input type="file" id="chat-files" multiple style="display:none">
-          <button id="chat-attach" class="btn" title="Attach files for the brain to read" style="padding:0 12px;font-size:1rem" aria-label="Attach files"><i data-lucide="paperclip" style="width:16px;height:16px"></i></button>
-          <textarea id="chat-input" rows="2" placeholder="Message…  (Enter to send · Shift+Enter = newline)" style="flex:1;padding:9px 12px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:10px;color:inherit;font:inherit;font-size:0.88rem;resize:vertical"></textarea>
-          <button id="chat-send" class="btn btn-primary" style="padding:0 18px">Send</button>
+        
+        <div id="chat-msgs" class="chat-messages-area"></div>
+        
+        <div class="chat-input-container">
+          <div class="chat-input-toolbar-top">
+            <select id="chat-brain" style="${sel}">${brainOpts}</select>
+            <select id="chat-div" style="${sel}">${divOpts}</select>
+            <select id="chat-agent" style="${sel}"><option value="">— none (chat brain directly) —</option></select>
+            <button id="chat-new" class="icon-btn-ghost" style="margin-left:auto;font-size:0.78rem;padding:6px 10px;border-radius:12px;width:auto;height:auto">＋ New chat</button>
+          </div>
+          
+          <div id="chat-attachments" class="chat-attachments"></div>
+          
+          <textarea id="chat-input" rows="1" placeholder="Ask anything..." class="chat-input-textarea"></textarea>
+          
+          <div class="chat-input-toolbar-bottom">
+            <input type="file" id="chat-files" multiple style="display:none">
+            <button id="chat-attach" class="icon-btn-ghost" title="Attach files" aria-label="Attach files"><i data-lucide="paperclip"></i></button>
+            <button id="chat-mic" class="icon-btn-ghost" title="Voice input" aria-label="Voice input"><i data-lucide="mic"></i></button>
+            <div style="flex:1"></div>
+            <button id="chat-send" class="icon-btn-primary" aria-label="Send"><i data-lucide="send"></i></button>
+          </div>
         </div>
       </div>`;
 
@@ -456,11 +464,66 @@ class App {
     agentEl.addEventListener('change', () => { this.chatSel.agent = agentEl.value; });
 
     const input = this.contentEl.querySelector('#chat-input');
+    
+    // Auto-resize textarea
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    });
+
     // Send even with no text if files are attached (e.g. "here, read these").
-    const doSend = () => { const t = input.value.trim(); if ((t || this.chatAttachments.length) && !this.chatBusy) { input.value = ''; this.sendChat(t); } };
+    const doSend = () => { const t = input.value.trim(); if ((t || this.chatAttachments.length) && !this.chatBusy) { input.value = ''; input.style.height = 'auto'; this.sendChat(t); } };
     this.contentEl.querySelector('#chat-send').addEventListener('click', doSend);
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
     this.contentEl.querySelector('#chat-new').addEventListener('click', () => this.startNewChat());
+
+    // Mic Support (Web Speech API)
+    const micBtn = this.contentEl.querySelector('#chat-mic');
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      let isRecording = false;
+
+      recognition.onresult = (event) => {
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          }
+        }
+        if (finalTranscript) {
+          const startPos = input.selectionStart;
+          const endPos = input.selectionEnd;
+          input.value = input.value.substring(0, startPos) + finalTranscript + ' ' + input.value.substring(endPos, input.value.length);
+          input.selectionStart = input.selectionEnd = startPos + finalTranscript.length + 1;
+          input.dispatchEvent(new Event('input')); // trigger auto-resize
+        }
+      };
+      
+      recognition.onstart = () => {
+        isRecording = true;
+        micBtn.style.color = '#EF4444';
+        micBtn.classList.add('recording-pulse');
+      };
+      
+      recognition.onend = () => {
+        isRecording = false;
+        micBtn.style.color = '';
+        micBtn.classList.remove('recording-pulse');
+      };
+
+      micBtn.addEventListener('click', () => {
+        if (isRecording) {
+          recognition.stop();
+        } else {
+          recognition.start();
+        }
+      });
+    } else {
+      micBtn.style.display = 'none'; // hide if not supported
+    }
 
     // File attachments (staged client-side; uploaded as task inputs on send).
     const fileEl = this.contentEl.querySelector('#chat-files');
