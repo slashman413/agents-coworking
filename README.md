@@ -39,6 +39,26 @@ pane of glass.
   git submodule update --init
   ```
 
+### Fast path — two scripts (recommended)
+
+From the repo root, after cloning with submodules (above):
+
+```bash
+# 1. Build + launch the server (installs deps, builds, starts a systemd user service)
+deploy/install-server.sh
+
+# 2. Drop the coordination skill + MCP connection into your agent clients on this box
+deploy/install-skill.sh            # auto-detects Claude Code / Hermes / Antigravity
+```
+
+`install-server.sh` generates a systemd unit with **this machine's** real node path and
+working dir (nothing to hand-edit), or pass `--foreground` to launch in the terminal and
+`--build-only` to stop after building. `install-skill.sh` copies the right per-client
+skill into place and, for Claude Code, merges `mcpServers.cowork` into `~/.claude.json`
+non-destructively (add `--url http://<host>:6868` for a remote server; `--client claude|hermes|agy|all`
+to target one). The numbered steps below are the same thing, broken out for when you want
+to do it by hand.
+
 ### 1. Install Dependencies
 
 ```bash
@@ -120,6 +140,20 @@ Open **http://localhost:6868** in your browser.
 ---
 
 ## Connecting AI Agents
+
+**Scripted (recommended):** `deploy/install-skill.sh` installs the `cowork` coordination
+skill and wires the MCP connection for every agent client detected on the box — one command
+instead of hand-editing each config:
+
+```bash
+deploy/install-skill.sh                          # auto-detect all clients, localhost server
+deploy/install-skill.sh --client claude          # just Claude Code
+deploy/install-skill.sh --client all --url http://cowork-host:6868   # remote server, every client
+```
+
+It drops the per-client skill (canonical copies in `deploy/skills/`) into the client's live
+skill dir and, for Claude Code, merges the `mcpServers.cowork` entry into `~/.claude.json`
+without disturbing your other servers. The manual per-client config is below for reference.
 
 ### Claude Code
 
@@ -322,8 +356,18 @@ Dispatcher status: `GET /api/dispatcher`. Tune `orchestration.maxConcurrent` /
 
 ## Deployment (systemd) & Remote Access
 
+Easiest — `deploy/install-server.sh` generates and enables the user service with this
+machine's resolved node path and working dir:
+
 ```bash
-cp deploy/cowork-mcp.service ~/.config/systemd/user/
+deploy/install-server.sh          # build + install & start the cowork-mcp user service
+```
+
+Manual equivalent (the tracked `deploy/cowork-mcp.service` has `/home/USER` placeholders
+you must edit first — the script fills them in for you):
+
+```bash
+cp deploy/cowork-mcp.service ~/.config/systemd/user/   # then edit the USER/paths inside
 systemctl --user daemon-reload
 systemctl --user enable --now cowork-mcp
 ```
