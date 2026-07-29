@@ -83,6 +83,47 @@ function chainChip(brain, i, total, known) {
     <a data-rm="${esc(brain)}" title="remove" style="cursor:pointer">✕</a></span>`;
 }
 
+/**
+ * Portal — a launcher for the local self-hosted web services this host runs
+ * (Mautic, Filebrowser, …). Cards are built by merging two sources:
+ *   1. PORTAL_DEFAULTS — a curated catalog shown out of the box.
+ *   2. config.services from /api/config — the operator's own list; entries are
+ *      matched to the catalog by key so a bare { url, enabled } gets a nice
+ *      label/icon/description for free, and unknown keys still render sensibly.
+ * Everything is a plain link that opens the service in a new tab — no health
+ * probing (cross-origin localhost checks just trip CORS and add nothing).
+ */
+const PORTAL_CATALOG = {
+  mautic:      { label: 'Mautic',      icon: 'megaphone',   category: 'Marketing', description: 'Open-source marketing automation — campaigns, email, contacts.' },
+  filebrowser: { label: 'Filebrowser', icon: 'folder',      category: 'Files',     description: 'Web file manager — browse, upload and share host files.' },
+  firecrawl:   { label: 'Firecrawl',   icon: 'flame',       category: 'APIs & MCP', description: 'Web scraping / crawling API for LLM pipelines.' },
+  twseMcp:     { label: 'TWSE MCP',    icon: 'line-chart',  category: 'APIs & MCP', description: 'Taiwan Stock Exchange data MCP endpoint.' },
+  vllm35b:     { label: 'vLLM 35B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (35B).' },
+  vllm27b:     { label: 'vLLM 27B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (27B).' },
+  grafana:     { label: 'Grafana',     icon: 'gauge',       category: 'Ops',       description: 'Metrics dashboards and observability.' },
+  portainer:   { label: 'Portainer',   icon: 'container',   category: 'Ops',       description: 'Docker / container management UI.' },
+  n8n:         { label: 'n8n',         icon: 'workflow',    category: 'Automation', description: 'Workflow automation and integrations.' },
+};
+
+// Always-present launcher tiles so the Portal is useful before any service is
+// configured. Operator config.services entries override these by key.
+const PORTAL_DEFAULTS = {
+  mautic:      { url: 'http://localhost:8081' },
+  filebrowser: { url: 'http://localhost:8082' },
+};
+
+const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
+const PORTAL_ACCENT = '#2563EB';
+
+// Turn a service key like "twseMcp" into a readable "Twse Mcp" fallback label.
+function humanizeKey(key) {
+  return String(key)
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
+
 class App {
   constructor() {
     this.currentView = '';
@@ -245,7 +286,7 @@ class App {
       item.classList.toggle('active', item.dataset.view === hash);
     });
     const titles = {
-      dashboard: 'Dashboard', chat: 'Chat', connections: 'Connections', inbox: 'Task Inbox',
+      dashboard: 'Dashboard', chat: 'Chat', portal: 'Portal', connections: 'Connections', inbox: 'Task Inbox',
       workflows: 'Workflows', reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
@@ -256,6 +297,7 @@ class App {
     try {
       switch (this.currentView) {
         case 'chat': await this.renderChat(); break;
+        case 'portal': await this.renderPortal(); break;
         case 'connections': await this.renderConnections(); break;
         case 'inbox': await this.renderInbox(); break;
         case 'workflows': await this.renderWorkflows(); break;
@@ -1461,6 +1503,96 @@ class App {
   }
 
   // ── Config ─────────────────────────────────────────────────────────────
+
+  // ── Portal (launcher for local self-hosted web services) ────────────────
+
+  async renderPortal() {
+    const config = await this.api.get('/config').catch(() => ({}));
+    const configured = (config && config.services) || {};
+
+    // Merge curated defaults with the operator's config.services (config wins).
+    const merged = {};
+    for (const [key, v] of Object.entries(PORTAL_DEFAULTS)) merged[key] = { ...v };
+    for (const [key, v] of Object.entries(configured)) merged[key] = { ...(merged[key] || {}), ...v };
+
+    // Only http(s) URLs are launchable — anything else (javascript:, data:, …)
+    // is dropped so an escaped-but-malicious href can never reach the DOM.
+    const safeUrl = (u) => {
+      try { const p = new URL(u); return (p.protocol === 'http:' || p.protocol === 'https:') ? u : ''; }
+      catch { return ''; }
+    };
+
+    // Normalize each entry into a card model, enriched from the catalog.
+    const services = Object.entries(merged).map(([key, v]) => {
+      const meta = PORTAL_CATALOG[key] || {};
+      return {
+        key,
+        url: safeUrl(v.url || ''),
+        label: v.label || meta.label || humanizeKey(key),
+        description: v.description || meta.description || '',
+        icon: v.icon || meta.icon || 'globe',
+        category: v.category || meta.category || 'Other',
+        // undefined enabled (curated defaults) => treat as available; only an
+        // explicit enabled:false marks a service the operator has turned off.
+        enabled: v.enabled !== false,
+      };
+    }).filter(s => s.url);
+
+    if (!services.length) {
+      this.contentEl.innerHTML = `<div class="empty-state">
+        <div class="empty-state-icon"><i data-lucide="layout-grid"></i></div>
+        <h3>No services yet</h3>
+        <p>Add a <code>services</code> block to your <code>~/.cowork/config.json</code> — each entry
+        <code>{ "url": "http://localhost:8081", "label": "Mautic", "icon": "megaphone", "category": "Marketing" }</code>
+        shows up here as a launch card.</p>
+      </div>`;
+      return;
+    }
+
+    // Group by category, in a stable, human-friendly order.
+    const groups = new Map();
+    for (const s of services) {
+      if (!groups.has(s.category)) groups.set(s.category, []);
+      groups.get(s.category).push(s);
+    }
+    const orderedCats = [...groups.keys()].sort((a, b) => {
+      const ia = PORTAL_CATEGORY_ORDER.indexOf(a), ib = PORTAL_CATEGORY_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+    });
+
+    const card = (s) => {
+      const c = PORTAL_ACCENT;
+      let host = s.url;
+      try { host = new URL(s.url).host || s.url; } catch { /* keep raw */ }
+      return `<a class="card portal-card" href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"
+          title="Open ${esc(s.label)} — ${esc(s.url)}">
+        <div class="portal-top">
+          <span class="portal-icon" style="background:${c}18; color:${c}; border:1px solid ${c}33">
+            <i data-lucide="${esc(s.icon)}"></i>
+          </span>
+          <span class="portal-open"><i data-lucide="external-link"></i></span>
+        </div>
+        <div class="portal-title">${esc(s.label)}${s.enabled ? '' : ` ${badge('disabled', '#94A3B8')}`}</div>
+        ${s.description ? `<div class="portal-desc">${esc(s.description)}</div>` : ''}
+        <div class="portal-url"><i data-lucide="link"></i> ${esc(host)}</div>
+      </a>`;
+    };
+
+    const sections = orderedCats.map(cat => `
+      <div class="portal-section">
+        <h3 class="section-title" style="margin-bottom:var(--space-md)">${esc(cat)}
+          <span style="color:var(--text-muted); font-weight:400">· ${groups.get(cat).length}</span>
+        </h3>
+        <div class="grid-3">${groups.get(cat).map(card).join('')}</div>
+      </div>`).join('');
+
+    this.contentEl.innerHTML = `
+      <p style="color:var(--text-secondary); font-size:0.875rem; margin-bottom:var(--space-lg)">
+        Quick-launch the local web services running on this host. Cards come from your
+        <code>config.json</code> <code>services</code> block, enriched with built-in defaults.
+      </p>
+      ${sections}`;
+  }
 
   async renderConfig() {
     const config = await this.api.get('/config');
