@@ -1066,17 +1066,21 @@ class App {
         style="width:100%; margin-bottom: var(--space-lg); padding:8px 12px; background:var(--bg-tertiary); border:1px solid var(--bg-tertiary); border-radius:10px; color:inherit; font:inherit; font-size:0.85rem">
       <div id="inbox-nomatch" style="display:none; color:var(--text-muted); font-size:0.85rem; padding:8px 0">No task titles match your search.</div>
       ${rows}
-      ${hasMore ? `<div style="text-align:center; margin-top:20px; margin-bottom:20px;"><button class="btn" id="inbox-load-more" style="padding:8px 20px; background:var(--bg-tertiary);">Load More Tasks</button></div>` : ''}`;
+      ${hasMore ? `<div id="inbox-load-more" style="text-align:center; margin-top:20px; margin-bottom:20px; color:var(--text-muted); font-size:0.85rem;">Loading more tasks...</div>` : ''}`;
 
     this.contentEl.querySelectorAll('[data-filter]').forEach(b =>
       b.addEventListener('click', () => { this.inboxLimit = 50; this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
       
-    const loadMoreBtn = this.contentEl.querySelector('#inbox-load-more');
-    if (loadMoreBtn) {
-      loadMoreBtn.addEventListener('click', () => {
-        this.inboxLimit += 50;
-        this.renderInbox();
+    const loadMoreEl = this.contentEl.querySelector('#inbox-load-more');
+    if (loadMoreEl) {
+      const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          observer.disconnect();
+          this.inboxLimit += 50;
+          this.renderInbox();
+        }
       });
+      observer.observe(loadMoreEl);
     }
 
     // Live client-side title filter, layered on top of the status filter.
