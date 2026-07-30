@@ -1022,6 +1022,8 @@ class App {
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
             ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" title="Re-run this task from the top of its brain chain"
               style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
+            ${t.status === 'done' && !failed ? `<button class="btn" data-continue-task="${esc(t.id)}" title="Continue this task — spawn a follow-up seeded with this run's output files and result, on the same brain"
+              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>` : ''}
             <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
               style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
         </div>
@@ -1093,6 +1095,21 @@ class App {
         try {
           await this.api.post(`/inbox/${encodeURIComponent(id)}/rerun`);
           this.toast('re-running', 'Task reset to pending and re-queued.');
+          this.renderInbox();
+        } catch (err) { this.toast('error', err.message); b.disabled = false; }
+      }));
+
+    // Continue a done task — spawn a follow-up seeded with this run's outputs.
+    this.contentEl.querySelectorAll('[data-continue-task]').forEach(b =>
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = b.dataset.continueTask;
+        const title = b.closest('[data-task]')?.dataset.title || id.slice(0, 8);
+        if (!confirm(`Continue this task?\n\n${title}\n\nA new task is created on the same brain, with this run's output files and result attached as inputs, to carry the work forward.`)) return;
+        b.disabled = true;
+        try {
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/continue`);
+          this.toast('continuing', 'Follow-up task queued with the prior outputs as inputs.');
           this.renderInbox();
         } catch (err) { this.toast('error', err.message); b.disabled = false; }
       }));

@@ -427,6 +427,117 @@ export class Store {
     return task;
   }
 
+  /** Persistent per-task artifacts dir (sibling of reports/ and inputs/). */
+  private artifactsDir(taskId: string): string {
+    return path.resolve(this.config.paths.reports, '..', 'artifacts', path.basename(taskId));
+  }
+
+  /**
+   * Copy a FINISHED task's outputs into a fresh task's inputs dir so a
+   * continuation run reads exactly what the prior run produced: its RESULT
+   * (written as previous-result.md) plus every OUTPUT ARTIFACT file
+   * (artifacts/<prevId>/*). Names collide-suffix like {@link materializeInputs}.
+   * Returns the stored input filenames (for context.inputFiles).
+   */
+  private seedContinuationInputs(newTaskId: string, prev: Task): string[] {
+    const dir = this.inputsDir(newTaskId);
+    const stored: string[] = [];
+    const place = (name: string, write: (dest: string) => void): void => {
+      fs.mkdirSync(dir, { recursive: true });
+      const original = path.basename(name);
+      let out = original, dest = path.join(dir, out);
+      for (let n = 1; fs.existsSync(dest); n++) {
+        const ext = path.extname(original);
+        out = `${path.basename(original, ext)}-${n}${ext}`;
+        dest = path.join(dir, out);
+      }
+      try { write(dest); stored.push(out); } catch { /* ignore */ }
+    };
+
+    // 1) The prior result as a readable markdown file the brain can open.
+    if (typeof prev.result === 'string' && prev.result.trim()) {
+      place('previous-result.md', dest =>
+        fs.writeFileSync(dest, `# Result of "${prev.title || prev.id}"\n\n${prev.result}\n`));
+    }
+    // 2) Every output artifact the prior run produced.
+    const artDir = this.artifactsDir(prev.id);
+    let artFiles: string[] = [];
+    try {
+      artFiles = fs.readdirSync(artDir).filter(f => { try { return fs.statSync(path.join(artDir, f)).isFile(); } catch { return false; } });
+    } catch { /* no artifacts */ }
+    for (const f of artFiles) {
+      if (/[\\/]/.test(f)) continue;
+      place(f, dest => fs.copyFileSync(path.join(artDir, f), dest));
+    }
+    return stored;
+  }
+
+  /**
+   * CONTINUE a successfully-finished task: spawn a NEW `pending` task that
+   * resumes the work, seeded with the finished run's OUTPUTS as its inputs — the
+   * prior result plus every artifact it produced land under inputs/<newId>/ and
+   * on context.inputFiles, so the executor picks up exactly where it left off.
+   * The continuation is pinned to the same executor that ran the original
+   * (agent / division / brain), and records context.continuedFrom = <prevId>.
+   *
+   * Only a DONE, non-failed task is continuable — a chain-exhausted failure uses
+   * {@link rerunTask} instead. Inputs are materialized BEFORE the task is written
+   * or emitted (mirrors createTask), so it is never claimable without them.
+   * Returns null when the task is gone or not in a continuable state.
+   */
+  public continueTask(taskId: string): Task | null {
+    const prev = this.getTask(taskId);
+    if (!prev) return null;
+    const isFailed = prev.failed === true
+      || (typeof prev.result === 'string' && /^FAILED\b/i.test(prev.result.trim()));
+    if (prev.status !== 'done' || isFailed) return null;
+
+    const id = uuidv4();
+    const prevCtx = prev.context || {};
+    // Pin to the same executor that ran the original so the follow-up resumes on
+    // the same brain/agent, not a fresh routing decision. ranAgent/ranBrain are
+    // what actually ran; fall back to the original assignment when unset.
+    const ctx: Record<string, any> = { continuedFrom: prev.id };
+    const agent = prevCtx.ranAgent || prevCtx.agent || prevCtx.role;
+    const division = prevCtx.ranDivision || prevCtx.division;
+    const brain = prevCtx.ranBrain || prevCtx.brain;
+    if (agent) ctx.agent = agent;
+    if (division) ctx.division = division;
+    if (brain) ctx.brain = brain;
+
+    const title = /^continue\b/i.test(prev.title || '') ? prev.title : `Continue: ${prev.title || 'task'}`;
+    const description = [
+      prev.description || '',
+      '',
+      '---',
+      `This task CONTINUES a previous run ("${prev.title || prev.id}") that finished successfully.`,
+      'Its result and every output file it produced are attached as input files (under inputs/, mirrored on context.inputFiles) — read them first, then carry the work forward from where it left off.'
+    ].join('\n');
+
+    const task: Task = {
+      id,
+      title,
+      description,
+      from: prev.from,
+      to: prev.to || {},
+      priority: prev.priority || 'normal',
+      status: 'pending',
+      context: ctx,
+      createdAt: new Date().toISOString(),
+      ...(prev.skill ? { skill: prev.skill } : {}),
+      ...(Array.isArray(prev.tags) ? { tags: [...prev.tags] } : {})
+    };
+
+    // Seed inputs from the prior run's outputs BEFORE the task is visible/pending.
+    const seeded = this.seedContinuationInputs(id, prev);
+    if (seeded.length) ctx.inputFiles = seeded;
+
+    const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
+    fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
+    this.eventBus.emitTaskCreated(task);
+    return task;
+  }
+
   /**
    * Delete a task and everything filed under it: its inbox JSON, its artifacts
    * dir, and every report belonging to it (matched on the report's taskId, plus
