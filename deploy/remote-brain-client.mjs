@@ -102,7 +102,7 @@ const MY_IDS = new Set(Object.keys(BRAIN));
 const AGENT_NAME = process.env.AGENT_NAME || `remote-${HOST}`;
 // Registration platform reflects the declared brains (a box may be claude-only,
 // hermes-only, or mixed). Derive from the first brain's exec.
-const execToPlatform = e => e === 'claude' ? 'claude' : e === 'agy' ? 'antigravity' : 'hermes';
+const execToPlatform = e => e === 'claude' ? 'claude' : e === 'agy' ? 'antigravity' : e === 'codex' ? 'codex' : e === 'ollama' ? 'ollama' : 'hermes';
 const PLATFORM = execToPlatform(Object.values(BRAIN)[0]?.exec || EXEC_DEFAULT);
 
 function need(k) { const v = process.env[k]; if (!v) { console.error(`Missing required env ${k}`); process.exit(2); } return v; }
