@@ -9,6 +9,19 @@ pane of glass.
 > model CLIs (claude/hermes/agy) and declares your brains in the registration handshake:
 > `COWORK_URL=http://<host>:6868 HOST=<you> node cowork/deploy/remote-brain-client.mjs`
 
+## Screenshots
+
+One dark-themed **single pane of glass** for the whole operation: live host metrics
+(CPU / GPU / memory / temp), open-task and roster counters, the dispatcher's current
+role → model chains, and a real-time activity feed.
+
+![Cowork dashboard — metrics, counters, dispatcher chains, and live activity](docs/images/cowork-dashboard.png)
+
+The [Workflows](#workflows--declarative-pipelines-two-execution-modes),
+[Task Inbox](#task-execution--the-dispatcher), [Brains](#brains--named-execution-identities-model--platform--location),
+[Connections](#wiring-a-remote-brain-machine), and [Chat](#connecting-ai-agents) views are
+shown in context throughout this README.
+
 ## Supported Platforms
 
 | Platform | Agents | Format |
@@ -141,6 +154,16 @@ Open **http://localhost:6868** in your browser.
 
 ## Connecting AI Agents
 
+The fastest way to talk to any connected model is the dashboard's **Chat** view: pick a
+brain, optionally scope it to a division and a specific roster agent, and your message is
+dispatched as a task — the reply is the task result.
+
+| Pick a division | …then a roster persona |
+|---|---|
+| ![Chat — choose a division](docs/images/cowork-chat.png) | ![Chat — choose an agent within the division](docs/images/cowork-chat-agents.png) |
+
+For programmatic access, wire the MCP connection into your agent clients:
+
 **Scripted (recommended):** `deploy/install-skill.sh` installs the `cowork` coordination
 skill and wires the MCP connection for every agent client detected on the box — one command
 instead of hand-editing each config:
@@ -213,6 +236,12 @@ MCP can connect to `http://localhost:6868/mcp`.
 The server includes a **dispatcher** that turns queued tasks into real agent runs.
 Output becomes the task `result`; the full transcript is filed as a report.
 
+Every task lands in the **Task Inbox**, tagged with the division/agent that ran it and the
+brain it ran on, with its output artifacts attached and filterable by status
+(done · in-progress · pending · wait-input · failed).
+
+![Task Inbox — tasks tagged with division/agent, brain, and downloadable artifacts](docs/images/cowork-tasks.png)
+
 ### Two-stage roster routing
 
 An unassigned task is routed in **two stages** by an orchestrator/classifier brain
@@ -248,10 +277,19 @@ A chain runs top → bottom: the task runs on `chain[0]`; on failure the dispatc
 success or the chain is exhausted. Pin a single task to one brain with
 `context.brain: "<id>"`.
 
+The **Agents** view exposes the per-division chain for every division — drag to reorder,
+`＋ add brain…`, or reset to the global default. No template edits, no restart.
+
+![Agents view — per-division brain fallback chains, editable inline](docs/images/cowork-agents.png)
+
 ## Brains — named execution identities (model × platform × location)
 
 `config.json → orchestration.brains` (`GET /api/brains`) names each brain a chain
-can reference:
+can reference. The **Brains** view lists every registered brain — its platform
+(`claude` / `agy` / `hermes`), underlying model, location, and whether it was
+`auto`-registered by a connecting client — with one-click deregister:
+
+![Brains view — every registered execution identity, model, and location](docs/images/cowork-brains.png)
 
 | Alias | Location | Runs |
 |-------|----------|------|
@@ -337,6 +375,12 @@ client. **Flexible**: the same script serves any brain by changing env only.
 **Scalable**: add machines/brains by adding `<name>.env` files; claims are atomic
 (single-process compare-and-set) so even multiple clients on the *same* brain id
 never double-run a task — first claim wins.
+
+Every connected client shows up live in the **Connections** view — grouped by platform,
+listing the brains it offers, its idle/busy state, and a per-session tally of how many
+tasks each brain has run vs. submitted:
+
+![Connections view — live MCP clients, the brains they offer, and per-brain invocation counters](docs/images/cowork-connections.png)
 
 The always-on coordinator agent shown in **Connections** as `cowork/orchestrator`
 polls the inbox, two-stage-routes unassigned tasks, reclaims orphans, and
@@ -435,6 +479,15 @@ AGY Agent calls:
 
 A **workflow** is a version-controlled template (`workflows/<id>.json`). It runs
 in one of two modes, chosen per template with `"mode"`:
+
+The **Workflows** view renders each template as a live graph — sequential fan-through
+pipelines and parallel fan-out/fan-in diamonds alike — with every step pinned to a
+division or agent, plus **Dry run** (inspect the resolved plan) and **Run** controls:
+
+| `build-and-ship` — a 5-step engineering pipeline | `expand-perspectives` — parallel multi-lens fan-out → synthesis |
+|---|---|
+| ![Build & Ship workflow — architect → build → CI → review → push](docs/images/cowork-workflows-1.png) | ![Expand Perspectives and Feedback → Roadmap workflows](docs/images/cowork-workflows-2.png) |
+
 
 - **`dag`** (default) — **static & deterministic.** The steps form a DAG wired by
   `dependsOn`; the whole graph is expanded into inbox tasks up front and the
