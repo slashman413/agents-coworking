@@ -768,7 +768,15 @@ export class Store {
     // Sort by created desc
     tasks.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     
-    if (filters?.status) tasks = tasks.filter(t => t.status === filters.status);
+    if (filters?.status) {
+      if (filters.status === 'failed') {
+        tasks = tasks.filter(t => t.failed === true || t.status === 'rejected' || (t.status === 'done' && typeof t.result === 'string' && /^FAILED\b/i.test(t.result.trim())));
+      } else if (filters.status === 'done') {
+        tasks = tasks.filter(t => t.status === 'done' && !(t.failed === true || (typeof t.result === 'string' && /^FAILED\b/i.test(t.result.trim()))));
+      } else {
+        tasks = tasks.filter(t => t.status === filters.status);
+      }
+    }
     // Guard t.to / t.from — task files are plain JSON on disk and may be malformed
     if (filters?.platform) tasks = tasks.filter(t => t.to?.platform === filters.platform || (!t.to?.platform && t.from?.platform === filters.platform));
     if (filters?.agent) tasks = tasks.filter(t => t.to?.agent === filters.agent || t.claimedBy === filters.agent);

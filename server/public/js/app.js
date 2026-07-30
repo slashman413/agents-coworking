@@ -132,6 +132,7 @@ class App {
     this.activity = [];
     this.inboxFilter = '';
     this.inboxSearch = '';     // Task Inbox title search (client-side, on top of the status filter)
+    this.inboxLimit = 50;
     this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
@@ -966,14 +967,17 @@ class App {
   }
 
   async renderInbox() {
+    this.inboxLimit = this.inboxLimit || 50;
     const filter = this.inboxFilter;
-    // `failed` is a pseudo-status — failed tasks are stored as `done` — so fetch
-    // everything and filter client-side. The `done` filter then EXCLUDES failed
-    // ones so successes stay green and failures live only under `failed`.
-    const q = (filter && filter !== 'failed') ? `?status=${filter}&limit=100` : '?limit=100';
+    const fetchLimit = this.inboxLimit + 1;
+    const q = filter ? `?status=${filter}&limit=${fetchLimit}` : `?limit=${fetchLimit}`;
     let [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
-    if (filter === 'failed') tasks = tasks.filter(isTaskFailed);
-    else if (filter === 'done') tasks = tasks.filter(t => !isTaskFailed(t));
+    
+    let hasMore = false;
+    if (tasks.length > this.inboxLimit) {
+      hasMore = true;
+      tasks = tasks.slice(0, this.inboxLimit);
+    }
 
     const pills = ['', 'done', 'in-progress', 'pending', 'wait-input', 'failed'].map(f => {
       const label = f === '' ? 'All' : f;
@@ -1061,10 +1065,19 @@ class App {
       <input id="inbox-search" type="search" placeholder="Search titles…" value="${esc(this.inboxSearch || '')}"
         style="width:100%; margin-bottom: var(--space-lg); padding:8px 12px; background:var(--bg-tertiary); border:1px solid var(--bg-tertiary); border-radius:10px; color:inherit; font:inherit; font-size:0.85rem">
       <div id="inbox-nomatch" style="display:none; color:var(--text-muted); font-size:0.85rem; padding:8px 0">No task titles match your search.</div>
-      ${rows}`;
+      ${rows}
+      ${hasMore ? `<div style="text-align:center; margin-top:20px; margin-bottom:20px;"><button class="btn" id="inbox-load-more" style="padding:8px 20px; background:var(--bg-tertiary);">Load More Tasks</button></div>` : ''}`;
 
     this.contentEl.querySelectorAll('[data-filter]').forEach(b =>
-      b.addEventListener('click', () => { this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
+      b.addEventListener('click', () => { this.inboxLimit = 50; this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
+      
+    const loadMoreBtn = this.contentEl.querySelector('#inbox-load-more');
+    if (loadMoreBtn) {
+      loadMoreBtn.addEventListener('click', () => {
+        this.inboxLimit += 50;
+        this.renderInbox();
+      });
+    }
 
     // Live client-side title filter, layered on top of the status filter.
     const searchEl = this.contentEl.querySelector('#inbox-search');
@@ -1313,7 +1326,7 @@ class App {
         key: s.key, label: s.title || s.key, dependsOn: s.dependsOn || [],
         sub: [s.agent && ('@' + s.agent), s.division && ('#' + s.division), s.brain && ('🧠 ' + s.brain)].filter(Boolean).join(' · ')
       }));
-      const params = (def.params || []).map(p => `<input data-param="${esc(p)}" placeholder="${esc(p)}…" style="${inp}">`).join('');
+      const params = (def.params || []).map(p => `<textarea data-param="${esc(p)}" placeholder="${esc(p)}…" style="${inp}; flex: 1 1 100%; width: 100%; box-sizing: border-box; resize: vertical; min-height: 120px; height: 15vh; max-height: 70vh; font-family: inherit; line-height: 1.5;" rows="4"></textarea>`).join('');
       const graph = orchestrated
         ? `<div style="font-size:0.72rem;color:var(--text-muted);margin:6px 0 4px">Step library — the orchestrator picks from these at runtime (order not fixed):</div>${this._stepLibraryHtml(nodes)}`
         : `<div class="wf-dag">${this._dagHtml(nodes)}</div>`;
