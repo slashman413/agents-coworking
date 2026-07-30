@@ -115,6 +115,20 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
     }
   });
 
+  // Continue a DONE (successful) task — spawn a follow-up task seeded with the
+  // finished run's OUTPUT files + result as inputs, pinned to the same executor,
+  // so the work carries forward. The dashboard shows this as a "Continue" button
+  // on done cards. 201 + the new task (so the UI can jump to it).
+  router.post('/inbox/:id/continue', (req, res) => {
+    try {
+      const task = store.continueTask(req.params.id);
+      if (!task) return res.status(400).json({ error: 'Task not found or not in a continuable (finished-success) state' });
+      res.status(201).json(task);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  });
+
   // Attach staged input uploads to an EXISTING task (union onto context.inputFiles
   // so the brain reads them). Body: { inputs: [{ token, name }] } — tokens come
   // from POST /api/uploads.
