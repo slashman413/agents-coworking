@@ -101,6 +101,7 @@
     "maxWorkflowSteps": 12,
     "defaultChain": [
       "local-ha-qwen35b",
+      "local-ha-deepseek-v4-pro",
       "local-ha-deepseek",
       "local-cc-opus"
     ],
@@ -110,6 +111,7 @@
         "description": "Decompose a CEO idea into role-tagged subtasks and dispatch them",
         "brains": [
           "local-cc-fable",
+          "local-ha-deepseek-v4-pro",
           "local-ha-qwen35b",
           "local-ha-deepseek"
         ]
@@ -118,6 +120,7 @@
         "description": "Fallback when the router can't classify or a roster agent fails through its chain",
         "brains": [
           "local-ha-qwen35b",
+          "local-ha-deepseek-v4-pro",
           "local-ha-deepseek",
           "local-cc-sonnet"
         ]
@@ -141,6 +144,12 @@
         "location": "local",
         "exec": "hermes",
         "model": "deepseek:deepseek-v4-flash"
+      },
+      "local-ha-deepseek-v4-pro": {
+        "description": "Local Hermes agent on DeepSeek V4 Pro (custom provider)",
+        "location": "local",
+        "exec": "hermes",
+        "model": "deepseek-ai/deepseek-v4-pro"
       },
       "local-cc-opus": {
         "description": "Local Claude Code using Opus 4.8",
