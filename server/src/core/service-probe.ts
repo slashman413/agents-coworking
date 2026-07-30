@@ -28,11 +28,25 @@ export interface ServiceStatus {
   reason?: string;
 }
 
+/**
+ * Curated launcher tiles the Portal always renders, even before the operator
+ * configures any services. This MUST stay in sync with PORTAL_DEFAULTS in
+ * public/js/app.js — the UI merges those same keys into its card list, so if we
+ * don't probe them here their status dot never leaves "checking".
+ */
+const PORTAL_DEFAULT_SERVICES: Record<string, ServiceConfig> = {
+  mautic: { url: 'http://localhost:8081', enabled: true },
+  filebrowser: { url: 'http://localhost:8082', enabled: true },
+};
+
 export async function probeServices(
   services: Record<string, ServiceConfig> | undefined,
   timeoutMs = 2500
 ): Promise<Record<string, ServiceStatus>> {
-  const entries = Object.entries(services || {});
+  // Merge curated defaults with the operator's config.services (config wins),
+  // mirroring the Portal UI so every rendered card has a matching probe result.
+  const merged: Record<string, ServiceConfig> = { ...PORTAL_DEFAULT_SERVICES, ...(services || {}) };
+  const entries = Object.entries(merged);
   const results = await Promise.all(entries.map(([key, svc]) => probeOne(key, svc, timeoutMs)));
   const out: Record<string, ServiceStatus> = {};
   for (const r of results) out[r.key] = r;

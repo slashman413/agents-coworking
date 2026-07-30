@@ -44,7 +44,7 @@
       "enabled": true
     },
     "filebrowser": {
-      "url": "http://localhost:8080",
+      "url": "http://localhost:8082",
       "label": "Filebrowser",
       "description": "Web file manager for host files.",
       "icon": "folder",

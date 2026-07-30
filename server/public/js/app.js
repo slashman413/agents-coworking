@@ -90,8 +90,10 @@ function chainChip(brain, i, total, known) {
  *   2. config.services from /api/config — the operator's own list; entries are
  *      matched to the catalog by key so a bare { url, enabled } gets a nice
  *      label/icon/description for free, and unknown keys still render sensibly.
- * Everything is a plain link that opens the service in a new tab — no health
- * probing (cross-origin localhost checks just trip CORS and add nothing).
+ * Each card is a plain link that opens the service in a new tab. Status dots are
+ * probed server-side (GET /api/services) rather than from the browser, since a
+ * cross-origin fetch to a service's localhost URL just trips CORS; the server
+ * runs on the host, so it can reach the real loopback ports. See service-probe.ts.
  */
 const PORTAL_CATALOG = {
   mautic:      { label: 'Mautic',      icon: 'megaphone',   category: 'Marketing', description: 'Open-source marketing automation — campaigns, email, contacts.' },
@@ -109,7 +111,7 @@ const PORTAL_CATALOG = {
 // configured. Operator config.services entries override these by key.
 const PORTAL_DEFAULTS = {
   mautic:      { url: 'http://localhost:8081' },
-  filebrowser: { url: 'http://localhost:8080' },
+  filebrowser: { url: 'http://localhost:8082' },
 };
 
 const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
