@@ -477,7 +477,7 @@ a { color: inherit; text-decoration: none; }
 .portal-card:hover {
   border-color: var(--accent-color);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-lg);
 }
 .portal-top {
   display: flex;
@@ -889,8 +889,8 @@ a { color: inherit; text-decoration: none; }
 }
 .chat-input-container:focus-within {
   background: var(--bg-primary);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-  border-color: var(--accent-subtle);
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent-color);
 }
 
 .chat-input-toolbar-top {
@@ -1055,3 +1055,132 @@ a { color: inherit; text-decoration: none; }
 .svc-status.disabled .svc-dot,
 .svc-status.unknown  .svc-dot { background: var(--text-muted); }
 .svc-status.checking .svc-dot { background: var(--status-warning); animation: pulse 2s infinite; }
+
+/* ===== Accessible focus states =====
+   Keyboard users get a clear, consistent ring on every interactive element;
+   mouse/touch users never see it (thanks to :focus-visible). */
+:where(a, button, .nav-item, .btn, .pill, .portal-card, .task-card,
+       .icon-btn-ghost, .icon-btn-primary, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+.nav-item:focus-visible { outline-offset: -2px; }
+/* Inputs already restyle their border on focus — give them a ring too so the
+   focused field is obvious against the page. */
+.roster-search:focus-visible,
+.chat-input-textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+/* Buttons pick up a subtle lift + active feedback for a more tactile feel. */
+.btn { border: 1px solid var(--border-color); }
+.btn:hover { border-color: var(--border-hover); background: var(--bg-tertiary); }
+.btn:active { transform: translateY(1px); }
+.btn-primary { border-color: transparent; }
+.btn-primary:hover { border-color: transparent; }
+.pill:active { transform: translateY(1px); }
+
+/* ===== Rendered markdown / report content =====
+   Chat replies, inbox task bodies, and reports render arbitrary markdown. Give
+   those blocks real typography instead of leaving headings, lists, code, links,
+   and tables unstyled. Scoped to content wrappers so app chrome is untouched. */
+.md-body, .report-body, .md-block {
+  font-size: 0.87rem;
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-wrap: break-word;
+}
+.md-body > :first-child,
+.report-body > :first-child { margin-top: 0; }
+.md-body > :last-child,
+.report-body > :last-child { margin-bottom: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4,
+.report-body h1, .report-body h2, .report-body h3, .report-body h4 {
+  line-height: 1.3;
+  margin: 1.2em 0 0.5em;
+  color: var(--text-primary);
+}
+.md-body h1, .report-body h1 { font-size: 1.3rem; }
+.md-body h2, .report-body h2 {
+  font-size: 1.12rem;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border-color);
+}
+.md-body h3, .report-body h3 { font-size: 1rem; }
+.md-body h4, .report-body h4 { font-size: 0.9rem; color: var(--text-secondary); }
+.md-body p, .report-body p { margin: 0.6em 0; }
+.md-body ul, .md-body ol,
+.report-body ul, .report-body ol { margin: 0.6em 0; padding-left: 1.4em; }
+.md-body li, .report-body li { margin: 0.25em 0; }
+.md-body a, .report-body a {
+  color: var(--accent-color);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.md-body a:hover, .report-body a:hover { border-bottom-color: currentColor; }
+.md-body code, .report-body code {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.86em;
+  background: var(--bg-tertiary);
+  padding: 0.15em 0.4em;
+  border-radius: var(--radius-sm);
+}
+.md-body pre, .report-body pre {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  overflow-x: auto;
+  margin: 0.8em 0;
+  line-height: 1.5;
+}
+.md-body pre code, .report-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.82rem;
+}
+.md-body blockquote, .report-body blockquote {
+  margin: 0.8em 0;
+  padding: 0.2em 0 0.2em 1em;
+  border-left: 3px solid var(--border-hover);
+  color: var(--text-secondary);
+}
+.md-body hr, .report-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1.2em 0;
+}
+.md-body table, .report-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 0.83rem;
+}
+.md-body th, .md-body td,
+.report-body th, .report-body td {
+  border: 1px solid var(--border-color);
+  padding: 6px 10px;
+  text-align: left;
+}
+.md-body th, .report-body th {
+  background: var(--bg-tertiary);
+  font-weight: 600;
+}
+.md-body img, .report-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+
+/* ===== Reduced motion =====
+   Respect users who ask the OS to minimize animation. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
