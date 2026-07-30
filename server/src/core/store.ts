@@ -617,7 +617,13 @@ export class Store {
     const task = this.getTask(params.taskId);
     if (!task || !task.interaction) return null;
 
-    const humanInput: Record<string, string | boolean> = {};
+    // Accumulate across rounds: an agent that pauses again (parkForInput) gets a
+    // FRESH interaction packet, but the answers it already received must not be
+    // dropped — otherwise every follow-up loses the earlier context and the agent
+    // re-asks the same things, so the task never progresses past wait-input. Seed
+    // from any prior humanInput and let this round's answers overwrite by label.
+    const prior = (task.context?.humanInput as Record<string, string | boolean>) || {};
+    const humanInput: Record<string, string | boolean> = { ...prior };
     for (const field of task.interaction.fields) {
       if (Object.prototype.hasOwnProperty.call(params.responses, field.id)) {
         let val = params.responses[field.id];

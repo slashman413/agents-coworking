@@ -614,11 +614,27 @@ export class Dispatcher {
     }
     lines.push(`# Task: ${task.title}`, ``, task.description, ``);
     const shownCtx = { ...(task.context || {}) } as Record<string, unknown>;
-    // inputFiles is rendered as its own section with readable paths (below), so
-    // drop it from the raw context dump to avoid a redundant bare filename list.
-    for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster', 'inputFiles']) delete shownCtx[k];
+    // inputFiles is rendered as its own section with readable paths (below), and
+    // humanInput as a dedicated "answers" section (below) — drop both from the raw
+    // context dump so they aren't duplicated or lost as noise in the JSON blob.
+    for (const k of ['persona', 'brainAuto', 'remoteWaitSince', 'dispatched', 'attempts', 'agentName', 'ranAgent', 'ranDivision', 'ranBrain', 'isRoster', 'inputFiles', 'humanInput', 'awaitingInput', 'inputQuestions']) delete shownCtx[k];
     if (Object.keys(shownCtx).length > 0) {
       lines.push(`# Context`, '```json', JSON.stringify(shownCtx, null, 2), '```', '');
+    }
+    // The user answered the question(s) this task paused on. Surface those answers
+    // FRONT AND CENTRE (not buried in the context JSON above) with an explicit
+    // instruction to proceed — otherwise the agent re-runs from scratch, re-asks
+    // the same thing, and the task bounces straight back to wait-input, looking
+    // like "nothing happened when I submitted my answers".
+    const humanInput = (task.context?.humanInput as Record<string, string | boolean>) || {};
+    const answerEntries = Object.entries(humanInput).filter(([, v]) => v !== undefined && v !== '' && v !== null);
+    if (answerEntries.length > 0) {
+      lines.push(
+        `# The user has answered your earlier question(s)`,
+        `You previously paused this task to ask for input. The user has now replied — use these answers and CONTINUE the task to completion. Do NOT ask these same questions again; only ask (via NEEDS_INPUT) for genuinely new information you still don't have.`,
+        ...answerEntries.map(([q, a]) => `- **${q}** → ${a}`),
+        ``
+      );
     }
     // Files the requester attached for this task. They live in a persistent dir;
     // point the agent at the absolute paths so it can read them regardless of cwd.
