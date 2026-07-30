@@ -11,6 +11,10 @@ dashboard that enables multi-platform AI agents (Claude Code, Antigravity, Herme
 CLI, and others) to coordinate, dispatch tasks, and share reports through a single pane of
 glass.
 
+> **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
+> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> rather than guess when blocked. They are injected into your prompt automatically.
+
 ## When to Use
 
 - "Dispatch a task to Claude / Hermes for code review" / "create a task for another agent"
@@ -93,8 +97,6 @@ All tools are called via the `cowork` MCP server. Use these tools directly.
 
 | Tool | Purpose | Key Arguments |
 |------|---------|---------------|
-| `file_report` | File a structured markdown report | `title`, `type`, `author_platform`, `author_agent`, `content`, `status`, `tags[]` |
-| `list_reports` | List reports (filterable) | `type`, `platform`, `limit` |
 | `get_roster` | Search the ~285-agent roster | `division`, `search`, `limit` |
 | `get_dashboard` | Full dashboard snapshot | _(none)_ |
 
@@ -238,7 +240,6 @@ loop:
   3. Filter for tasks where context.brain matches one of your brain IDs
   4. claim_task(task_id, agent_id)
   5. Execute the task
-  6. file_report(title, type="task-output", content=result, ...)
   7. complete_task(task_id, result, report_path)
   8. heartbeat(agent_id, status="idle")
   9. Wait POLL_MS (default 5000ms), repeat
@@ -306,15 +307,6 @@ complete_task(task_id="<id>", result="Results here", report_path="/path/to/repor
 ### 6. File a Report
 
 ```
-file_report(
-  title="Report title",
-  type="review|analysis|summary|task-output",
-  content="Markdown content",
-  author_platform="antigravity",
-  author_agent="local",
-  status="draft|review|final",
-  tags=["tag1", "tag2"]
-)
 ```
 
 ### 7. Query Roster
@@ -341,7 +333,7 @@ When dispatching from Antigravity:
    - `description`: the full request, verbatim + context
    - `from_platform`: `"antigravity"`, `from_agent`: `"local"`
    - `context: {"role": "orchestrator"}`, `tags: ["orchestrator"]`
-3. Track progress with `list_inbox` / `get_dashboard`; results in `list_reports`;
+3. Track progress with `list_inbox` / `get_dashboard`; results appear on the task card;
    any generated files land in `cowork/artifacts/<task-id>/` (downloadable).
 
 ---
@@ -413,8 +405,6 @@ Body: { "params": { "topic": "value" }, "dryRun": false }
 | `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | `POST` | `/api/inbox` | Create a new task |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
-| `GET` | `/api/reports` | Reports list |
-| `GET` | `/api/reports/:id` | Full report content |
 | `GET` | `/api/config` | Current configuration |
 | `GET` | `/api/workflows` | Workflow templates |
 | `POST` | `/api/workflows/:id/run` | Start a workflow run |

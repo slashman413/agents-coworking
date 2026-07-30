@@ -13,6 +13,10 @@ Require the `cowork` MCP server to be configured for this Codex session before c
 its tools. If it is unavailable, say so and use the dashboard or REST endpoints only
 when the user has requested that alternative.
 
+> **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
+> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> rather than guess when blocked. They are injected into your prompt automatically.
+
 ## Local Codex brain
 
 `cowork-local-brain@codex.service` is the persistent worker for
@@ -37,7 +41,7 @@ journalctl --user -u cowork-local-brain@codex.service -n 100 --no-pager
 4. Dispatch with `create_task`. Supply a complete description, origin identity, and
    `context.role` for automatic roster routing. Pin `context.brain` only when a
    specific execution identity is required.
-5. For assigned manual work: `claim_task` → perform it → `file_report` when durable
+5. For assigned manual work: `claim_task` → perform it → `complete_task` with the result
    context is useful → `complete_task` with the result and optional report path.
 
 ## Routing
@@ -58,7 +62,6 @@ journalctl --user -u cowork-local-brain@codex.service -n 100 --no-pager
 | `get_dashboard`, `list_inbox` | Check activity and pending work |
 | `create_task`, `claim_task`, `complete_task` | Manage task lifecycle |
 | `get_roster` | Find an appropriate division or agent |
-| `file_report`, `list_reports` | Publish and retrieve durable outcomes |
 
 Keep task results concise but complete. Save deliverable files to the task's
 `$COWORK_ARTIFACTS_DIR` when executing as a worker; Cowork uploads those files as

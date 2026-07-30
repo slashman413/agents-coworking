@@ -190,7 +190,7 @@ async function main() {
   });
 
   // ── Task artifacts (persistent per-task dir; downloadable) ─────────────────
-  const artifactsRoot = path.resolve(config.paths.reports, '..', 'artifacts');
+  const artifactsRoot = config.paths.artifacts;
   app.get('/api/artifacts/:taskId', (req, res) => {
     const dir = path.join(artifactsRoot, path.basename(req.params.taskId));
     if (!fs.existsSync(dir)) return res.json([]);

@@ -236,12 +236,11 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
     'complete_task',
     {
       task_id: z.string(),
-      result: z.string().optional(),
-      report_path: z.string().optional()
+      result: z.string().optional()
     },
     async (args) => {
       try {
-        const task = await store.completeTask({ taskId: args.task_id, result: args.result, reportPath: args.report_path });
+        const task = await store.completeTask({ taskId: args.task_id, result: args.result });
         if (!task) throw new Error('Task not found');
         return { content: [{ type: 'text', text: JSON.stringify(task) }] };
       } catch (e: any) {
@@ -274,59 +273,7 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
     }
   );
 
-  // 8. file_report
-  server.tool(
-    'file_report',
-    {
-      title: z.string(),
-      type: z.string(),
-      author_platform: z.string(),
-      author_agent: z.string(),
-      content: z.string(),
-      status: z.enum(['draft', 'review', 'final']).default('draft'),
-      tags: z.array(z.string()).optional(),
-      task_id: z.string().optional()
-    },
-    async (args) => {
-      try {
-        const report = store.fileReport({
-          title: args.title,
-          type: args.type,
-          author_platform: args.author_platform,
-          author_agent: args.author_agent,
-          content: args.content,
-          status: args.status,
-          tags: args.tags,
-          task_id: args.task_id
-        });
-        return { content: [{ type: 'text', text: JSON.stringify(report) }] };
-      } catch (e: any) {
-        return { content: [{ type: 'text', text: e.message }], isError: true };
-      }
-    }
-  );
 
-  // 9. list_reports
-  server.tool(
-    'list_reports',
-    {
-      type: z.string().optional(),
-      platform: z.string().optional(),
-      limit: z.number().default(20)
-    },
-    async (args) => {
-      try {
-        const reports = store.listReports({
-          type: args.type,
-          platform: args.platform,
-          limit: args.limit
-        });
-        return { content: [{ type: 'text', text: JSON.stringify(reports) }] };
-      } catch (e: any) {
-        return { content: [{ type: 'text', text: e.message }], isError: true };
-      }
-    }
-  );
 
   // 10. get_dashboard
   server.tool(

@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import type { Config, RoleConfig, Task } from '../types.js';
 import type { EventBus } from './events.js';
 import type { Store, CompletionDecision } from './store.js';
@@ -40,7 +40,7 @@ interface ExecPlan {
  * Polls the inbox for pending tasks that carry a role (context.role, or a tag
  * matching a configured role name), claims them, spawns the mapped platform CLI
  * headlessly, and completes the task with the agent's output. Full stdout is
- * also filed as a report so the Web UI shows complete inputs/outputs.
+ * saved to artifacts/<task-id>/result.md so the Web UI shows the full output.
  *
  * Role → executor mapping lives in config.json under `orchestration.roles`:
  *   claude → `claude -p <prompt> --model <model> --dangerously-skip-permissions`
@@ -160,7 +160,7 @@ export class Dispatcher {
 
   /** Persistent per-task artifacts dir (survives reboot — under the repo, gitignored). */
   private artifactsDir(taskId: string): string {
-    return join(this.config.paths.reports, '..', 'artifacts', taskId);
+    return join(this.config.paths.artifacts, taskId);
   }
 
   /** True while a task still has an unanswered human-in-the-loop interaction
@@ -585,11 +585,25 @@ export class Dispatcher {
     return deps.every((id: string) => this.store.getTask(id)?.status === 'done');
   }
 
+  /** The operating rules every executing agent must follow (CONVENTIONS.md at the
+   *  repo root). Read once and cached — injected into every dispatched prompt so a
+   *  brain cannot run without them. */
+  private conventionsCache: string | null = null;
+  private conventions(): string {
+    if (this.conventionsCache !== null) return this.conventionsCache;
+    const file = join(this.config.paths.artifacts, '..', 'CONVENTIONS.md');
+    try { this.conventionsCache = readFileSync(file, 'utf-8').trim(); }
+    catch { this.conventionsCache = ''; }
+    return this.conventionsCache;
+  }
+
   private buildPrompt(task: Task, plan: { agent: string; division?: string; isRoster: boolean }): string {
     const port = this.config.server.port;
     const role = plan.agent;
     const artifactsDir = this.artifactsDir(task.id);
     const lines: string[] = [];
+    const rules = this.conventions();
+    if (rules) lines.push(rules, ``, `---`, ``);
     if (plan.isRoster) {
       // Run the roster agent's full .md persona as the system prompt.
       const p = this.store.getAgentPersona(plan.agent);
@@ -640,7 +654,7 @@ export class Dispatcher {
     }
     lines.push(
       ``,
-      `If you generate any files (reports, media, data), save them to the directory: ${artifactsDir} — they become downloadable from the dashboard when the task completes.`,
+      `If you generate any files (documents, media, data), save them to the directory: ${artifactsDir} — they become downloadable from the dashboard when the task completes.`,
       `When done, your final output (stdout) becomes the task result visible to the CEO on the dashboard.`,
       `If you CANNOT finish without more information or a decision from the user, do NOT guess or invent an answer. End your output with a line beginning "NEEDS_INPUT:" followed by your question(s), one per line. The task will then pause and wait for the user to answer instead of being marked done.`
     );
@@ -986,25 +1000,6 @@ export class Dispatcher {
       artifacts = readdirSync(artDir).filter(f => { try { return statSync(join(artDir, f)).isFile(); } catch { return false; } });
     } catch { /* ignore */ }
 
-    // Full transcript as a report (never lose the result if filing throws).
-    // `verdict.ok` — not the raw exit code — decides success, so a rate-limited
-    // run is filed as a failed draft even though its CLI exited 0.
-    let report: { id: string; filePath: string } | null = null;
-    try {
-      report = this.store.fileReport({
-        task_id: task.id,
-        title: `[${plan.label}] ${task.title}`,
-        type: 'task-output',
-        author_platform: plan.platform === 'pipeline' ? 'cowork' : plan.platform,
-        author_agent: plan.label,
-        content: output.text,
-        status: verdict.ok ? 'final' : 'draft',
-        tags: [plan.agent, plan.division || '', plan.brainId, 'dispatcher', verdict.ok ? 'success' : 'failed'].filter(Boolean)
-      });
-    } catch (e) {
-      console.error(`Dispatcher: report filing failed for task ${task.id}:`, e);
-    }
-
     // The result is a QUESTION back to the user (not a failure — verdict is ok —
     // and not a finished deliverable). Park the task on `wait-input` with the
     // questions as an interaction packet: the orchestrator neither marks it done
@@ -1032,7 +1027,7 @@ export class Dispatcher {
       : [];
     const failedList = failedBrains.map(f => `${f.brain} (${f.reason})`).join('; ');
     const result = verdict.ok
-      ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in report ${report?.id ?? 'n/a'})` : output.text
+      ? output.text.length > 2000 ? output.text.slice(0, 2000) + `\n…(full output in artifacts/${task.id}/result.md)` : output.text
       : `FAILED after ${bound} attempt(s) (chain exhausted). Brains that failed: ${failedList || plan.brainId}. Last output: ${output.text.slice(0, 800)}`;
 
     // Record which agent/brain ran it on the task itself (item 5) + artifacts.
@@ -1043,7 +1038,7 @@ export class Dispatcher {
       this.store.saveTask(done);
     }
     // internal: the dispatcher already verified this run — skip the completion guard.
-    await this.store.completeTask({ taskId: task.id, result, reportPath: report?.filePath, internal: true });
+    await this.store.completeTask({ taskId: task.id, result, internal: true });
     console.log(`Dispatcher: task ${task.id} ${verdict.ok ? 'completed' : 'FAILED (chain exhausted)'} (${output.text.length} chars${artifacts.length ? ', ' + artifacts.length + ' artifact(s)' : ''})`);
   }
 }

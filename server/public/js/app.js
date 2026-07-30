@@ -288,7 +288,7 @@ class App {
     });
     const titles = {
       dashboard: 'Dashboard', chat: 'Chat', portal: 'Portal', connections: 'Connections', inbox: 'Task Inbox',
-      workflows: 'Workflows', reports: 'Reports', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
+      workflows: 'Workflows', team: 'Agents', brains: 'Brains', roster: 'Agent Roster', config: 'Configuration'
     };
     this.viewTitleEl.textContent = titles[hash] || 'Dashboard';
     this.renderCurrentView();
@@ -316,7 +316,6 @@ class App {
         case 'connections': await this.renderConnections(); break;
         case 'inbox': await this.renderInbox(); break;
         case 'workflows': await this.renderWorkflows(); break;
-        case 'reports': await this.renderReports(); break;
         case 'team': await this.renderTeam(); break;
         case 'brains': await this.renderBrains(); break;
         case 'roster': await this.renderRoster(); break;
@@ -373,7 +372,6 @@ class App {
         ${stat('bot', status.activeAgents, 'Active Agents')}
         ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
                `Open Tasks (${status.inboxSummary.completed - (status.inboxSummary.failed || 0)} done${status.inboxSummary.failed ? `, ${status.inboxSummary.failed} failed` : ''}${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
-        ${stat('file-text', status.recentReports, 'Recent Reports')}
         ${stat('users', status.rosterCount, 'Agent Roster')}
       </div>
       <div class="grid-2" style="margin-bottom: var(--space-xl)">
@@ -1431,49 +1429,6 @@ class App {
   }
 
   // ── Reports ────────────────────────────────────────────────────────────
-
-  async renderReports() {
-    const reports = await this.api.get('/reports?limit=100');
-    if (!reports.length) {
-      this.contentEl.innerHTML = `
-        <div class="empty-state">
-          <div class="empty-state-icon"><i data-lucide="file-text"></i></div>
-          <h3>No reports filed yet</h3>
-          <p>Reports appear here when agents submit them.</p>
-        </div>`;
-      return;
-    }
-    this.contentEl.innerHTML = reports.map(r => `
-      <div class="card task-card" style="margin-bottom: var(--space-md)" data-report="${esc(r.id)}">
-        <div class="task-card-header">
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-            ${badge(r.type, '#0EA5E9')}
-            ${badge(r.status, r.status === 'final' ? '#22C55E' : '#EAB308')}
-            <strong style="margin-left:4px; font-size:0.9rem">${esc(r.title)}</strong>
-          </div>
-          <span class="task-meta">${esc(r.author?.platform || '?')}/${esc(r.author?.agent || '?')} · ${timeAgo(r.createdAt)}</span>
-        </div>
-        <p style="font-size:0.85rem; color:var(--text-secondary); margin-top:6px">${esc(r.summary || '')}</p>
-        <div class="report-body" style="display:none; margin-top: var(--space-md)"></div>
-      </div>`).join('');
-
-    this.contentEl.querySelectorAll('[data-report]').forEach(card =>
-      card.addEventListener('click', async (e) => {
-        if (e.target.closest('pre, .md-block, a, button')) return;
-        const body = card.querySelector('.report-body');
-        if (body.style.display === 'none' || !body.style.display) {
-          if (!body.dataset.loaded) {
-            const full = await this.api.get(`/reports/${card.dataset.report}`);
-            body.innerHTML = mdViewer(full.content || full.summary || '', 'REPORT');
-            body.dataset.loaded = '1';
-            createIcons();
-          }
-          body.style.display = 'block';
-        } else {
-          body.style.display = 'none';
-        }
-      }));
-  }
 
   // ── Roster ─────────────────────────────────────────────────────────────
 

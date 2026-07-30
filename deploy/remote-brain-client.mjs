@@ -43,6 +43,10 @@ import { dirname, join } from 'node:path';
 import os from 'node:os';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Operating rules every executing brain must follow (repo root CONVENTIONS.md).
+// Prepended to every prompt so a remote brain runs under the same rules as a local one.
+let CONVENTIONS = '';
+try { CONVENTIONS = readFileSync(join(HERE, '..', 'CONVENTIONS.md'), 'utf8').trim(); } catch { /* optional */ }
 
 const URL_BASE = need('COWORK_URL').replace(/\/$/, '');
 const API_KEY = process.env.COWORK_API_KEY || '';
@@ -150,9 +154,9 @@ function buildPrompt(task, artDir, inputInfo) {
   const persona = ctx.persona;   // roster agent's full .md persona (stamped by the dispatcher)
   const role = ctx.agent || ctx.role || 'agent';
   const lines = persona
-    ? [persona, ``, `---`, ``, `You have been assigned the following task. Work autonomously and produce your final deliverable as plain text (markdown allowed).`, ``,
+    ? [...(CONVENTIONS ? [CONVENTIONS, ``, `---`, ``] : []), persona, ``, `---`, ``, `You have been assigned the following task. Work autonomously and produce your final deliverable as plain text (markdown allowed).`, ``,
        `# Task: ${task.title}`, ``, task.description, ``]
-    : [`You are the "${role}" agent (brain: ${ctx.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
+    : [...(CONVENTIONS ? [CONVENTIONS, ``, `---`, ``] : []), `You are the "${role}" agent (brain: ${ctx.brain}) in a multi-agent company. Work autonomously and produce your final deliverable as plain-text output.`,
        ``, `# Task: ${task.title}`, ``, task.description, ``];
   // Surface user-supplied context, minus the persona + dispatcher bookkeeping (avoid noise/dupes).
   // inputFiles is rendered as its own section with local paths (below).
@@ -248,15 +252,16 @@ async function handle(task, agentId) {
     const inputInfo = await downloadInputs(task.id);
     if (inputInfo.files.length) console.log(`[${AGENT_NAME}] downloaded ${inputInfo.files.length} input file(s) for ${task.id}`);
     const { ok, text } = await runModel(brain, buildPrompt(task, artDir, inputInfo), artDir);
+    // Persist the FULL transcript as result.md so it survives as a downloadable
+    // artifact — the task result itself is truncated to a summary. (The local
+    // dispatcher does the same; without this a long remote answer would be lost.)
+    try { writeFileSync(join(artDir, 'result.md'), `# ${task.title}\n\n${text}\n`); } catch { /* ignore */ }
     const uploaded = await uploadArtifacts(task.id, artDir);
     if (uploaded) console.log(`[${AGENT_NAME}] uploaded ${uploaded} artifact(s) for ${task.id}`);
-    let reportPath;
-    try {
-      const rep = await tool('file_report', { task_id: task.id, title: `[${brain.id}] ${task.title}`, type: 'task-output', author_platform: PLATFORM, author_agent: brain.id, content: text, status: ok ? 'final' : 'draft', tags: [brain.id, 'remote-brain', ok ? 'success' : 'failed'] });
-      reportPath = rep?.filePath;
-    } catch (e) { console.error(`[${AGENT_NAME}] file_report failed:`, e.message); }
-    const result = ok ? (text.length > 2000 ? text.slice(0, 2000) + '\n…(full output in report)' : text) : `FAILED on ${brain.id}: ${text.slice(0, 1000)}`;
-    await tool('complete_task', { task_id: task.id, result, ...(reportPath ? { report_path: reportPath } : {}) });
+    const result = ok
+      ? (text.length > 2000 ? text.slice(0, 2000) + `\n…(full output in artifacts/${task.id}/result.md)` : text)
+      : `FAILED on ${brain.id}: ${text.slice(0, 1000)}`;
+    await tool('complete_task', { task_id: task.id, result });
     console.log(`[${AGENT_NAME}] ${ok ? 'completed' : 'FAILED'} ${task.id}`);
   } catch (e) {
     console.error(`[${AGENT_NAME}] error on ${task.id}:`, e.message);

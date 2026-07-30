@@ -17,6 +17,10 @@ Multi-agent coordination framework (slashman413/cowork) running as a local MCP s
 on `http://localhost:6868`. Agents register with capabilities AND brains (model specs),
 dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 
+> **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
+> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> rather than guess when blocked. They are injected into your prompt automatically.
+
 ## When to Use
 
 - "Dispatch a task to Claude for code review" / "create a task for another agent"
@@ -41,7 +45,6 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 
 - `cowork/` — repo root (e.g. `~/cowork/` or wherever you cloned it)
 - `inbox/` — Task queue (JSON files, auto-managed)
-- `reports/` — Generated reports (markdown with YAML frontmatter)
 - `artifacts/` — Per-task output files (audio/video/md), downloadable from the Inbox
 - `.status/` — Runtime state (auto-managed)
 - `deploy/remote-brain-client.mjs` — Remote brain registration script (zero-config)
@@ -62,8 +65,6 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 | `claim_task` | Claim a pending inbox task |
 | `complete_task` | Mark a task as done with results |
 | `list_inbox` | List inbox tasks with status/platform filters |
-| `file_report` | File a structured report |
-| `list_reports` | List reports with type/platform filters |
 | `get_dashboard` | Get full dashboard data (agents, inbox, services) |
 | `list_resources` | List available resources from MCP server |
 | `read_resource` | Read a resource by URI |
@@ -84,8 +85,6 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 | GET | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | POST | `/api/inbox` | Create a new task |
 | PATCH | `/api/inbox/:id` | Claim or complete a task |
-| GET | `/api/reports` | Reports list |
-| GET | `/api/reports/:id` | Full report content |
 | GET | `/api/config` | Current configuration |
 | GET | `/api/events` | SSE event stream (real-time) |
 
@@ -160,7 +159,7 @@ When the user shares a business idea or multi-part request:
    (1 of 285) whose `.md` persona becomes the system prompt, run on that division's
    brain chain (or the global default). Target directly with `context.agent: "<slug>"`.
 
-3. Track progress with `list_inbox` / `get_dashboard`; results in `list_reports`;
+3. Track progress with `list_inbox` / `get_dashboard`; results appear on the task card;
    any generated files land in `cowork/artifacts/<task-id>/` (downloadable).
 
 ### Routing model (config.json orchestration)
@@ -243,14 +242,6 @@ complete_task(task_id="<id>", result="Results here", report_path="/path/to/repor
 ### 6. File a Report
 
 ```
-file_report(
-  title="Report title",
-  type="review|analysis|summary|...",
-  content="Markdown content",
-  author_platform="hermes",
-  author_agent="hermes-agent-01",
-  status="draft|review|final"
-)
 ```
 
 ### 7. Query Roster

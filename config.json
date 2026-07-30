@@ -10,10 +10,11 @@
   "paths": {
     "agencyAgents": "./agency-agents",
     "inbox": "./inbox",
-    "reports": "./reports",
     "status": "./.status",
     "decisions": "./decisions",
-    "workflows": "./workflows"
+    "workflows": "./workflows",
+    "artifacts": "./artifacts",
+    "inputs": "./inputs"
   },
   "platforms": {
     "claude": {

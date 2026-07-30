@@ -157,7 +157,10 @@ export interface Config {
   paths: {
     agencyAgents: string;
     inbox: string;
-    reports: string;
+    /** Per-task output files, downloadable from the Inbox. */
+    artifacts: string;
+    /** Files a person attaches to a task for the brain to read. */
+    inputs: string;
     status: string;
     decisions: string;
     /** Dir of declarative workflow templates (workflows/*.json). */
@@ -268,7 +271,6 @@ export interface Task {
   claimedBy?: string;
   completedAt?: string;
   result?: string;
-  reportPath?: string;
   /** Filenames collected from the task's artifacts dir (downloadable when done). */
   artifacts?: string[];
   /**
@@ -283,23 +285,6 @@ export interface Task {
   failed?: boolean;
 }
 
-export interface Report {
-  id: string;
-  /** Task this report was filed for — lets deleting a task remove its reports. */
-  taskId?: string;
-  title: string;
-  type: string;
-  author: {
-    platform: string;
-    agent: string;
-  };
-  createdAt: string;
-  status: 'draft' | 'review' | 'final';
-  tags?: string[];
-  filePath: string;
-  summary?: string;
-}
-
 export interface DashboardData {
   activeAgents: number;
   inboxSummary: {
@@ -311,7 +296,6 @@ export interface DashboardData {
     /** Finished tasks that exhausted their fallback chain (task.failed === true). */
     failed: number;
   };
-  recentReports: number;
   platformStatus: Record<string, boolean>;
   rosterCount: number;
   uptime: number;
@@ -322,7 +306,6 @@ export interface CoworkEventPayloads {
   taskCreated: { task: Task };
   taskClaimed: { task: Task; agentId: string };
   taskCompleted: { task: Task };
-  reportFiled: { report: Report };
   heartbeat: { agentId: string; status: string; currentTask?: string };
 }
 

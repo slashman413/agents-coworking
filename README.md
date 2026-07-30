@@ -448,8 +448,6 @@ Once connected, agents have access to these tools:
 | `claim_task` | Claim a pending inbox task |
 | `complete_task` | Mark a task as done with results |
 | `list_inbox` | List inbox tasks with status/platform filters |
-| `file_report` | File a structured report |
-| `list_reports` | List reports with type/platform filters |
 | `get_dashboard` | Get full dashboard data (active agents, inbox stats, etc.) |
 
 ### Example: Cross-Platform Task Dispatch
@@ -469,8 +467,8 @@ AGY Agent calls:
 
 → Task appears in dashboard inbox
 → Claude Code picks it up, runs review
-→ Claude calls file_report(...) + complete_task(...)
-→ Report appears in dashboard
+→ Claude calls complete_task(...) with its result + artifacts
+→ Result + artifacts appear on the task card
 ```
 
 ---
@@ -626,7 +624,6 @@ The Web UI uses these endpoints (also available for scripts/integrations):
 | `GET` | `/api/workflows-invalid` | Templates that failed to load, with the reason (JSON/validation errors) |
 | `POST` | `/api/workflows/:id/run` | Start a run: expand a DAG template into tasks, or begin an orchestrated run; `{ params, dryRun }` |
 | `GET` | `/api/workflow-runs` / `/api/workflow-runs/:runId` | Runs for the run view (DAG grouped from tasks; orchestrated from run records + decision log) |
-| `GET` | `/api/reports` / `/api/reports/:id` | Reports list / full content |
 | `GET` | `/api/roster?division=engineering` | Agent roster (filterable) |
 | `GET` | `/api/roster-divisions` | Roster grouped by division (for the Agents view) |
 | `GET` | `/api/dispatcher` | Special agents + brains + defaultChain + divisionChains + running |

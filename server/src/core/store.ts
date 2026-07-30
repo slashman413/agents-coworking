@@ -3,7 +3,7 @@ import path from 'path';
 import matter from 'gray-matter';
 import { v4 as uuidv4 } from 'uuid';
 import { globSync } from 'glob';
-import type { Config, ActiveAgent, Task, Report, DashboardData, AgentCard, InteractionField } from '../types.js';
+import type { Config, ActiveAgent, Task, DashboardData, AgentCard, InteractionField } from '../types.js';
 import type { EventBus } from './events.js';
 import { Roster } from './roster.js';
 
@@ -40,7 +40,8 @@ export class Store {
   public initialize(): void {
     const dirs = [
       this.config.paths.inbox,
-      this.config.paths.reports,
+      this.config.paths.artifacts,
+      this.config.paths.inputs,
       this.config.paths.status,
       this.config.paths.decisions,
       this.config.paths.workflows
@@ -170,9 +171,9 @@ export class Store {
   // into the task dir at creation time keeps create-with-inputs race-free — the
   // task is only visible as `pending` (claimable) once its inputs are present.
 
-  /** Repo-level inputs root (sibling of reports/ and artifacts/). */
+  /** Repo-level inputs root. */
   private inputsRoot(): string {
-    return path.resolve(this.config.paths.reports, '..', 'inputs');
+    return this.config.paths.inputs;
   }
   private inputsDir(taskId: string): string {
     return path.join(this.inputsRoot(), path.basename(taskId));
@@ -348,7 +349,7 @@ export class Store {
   public setCompletionGuard(fn: CompletionGuard): void { this.completionGuard = fn; }
 
 
-  public async completeTask(params: { taskId: string; result?: string; reportPath?: string; internal?: boolean }): Promise<Task | null> {
+  public async completeTask(params: { taskId: string; result?: string; internal?: boolean }): Promise<Task | null> {
     const task = this.getTask(params.taskId);
     if (!task) return null;
 
@@ -370,7 +371,6 @@ export class Store {
     task.status = 'done';
     task.completedAt = new Date().toISOString();
     if (result) task.result = result;
-    if (params.reportPath) task.reportPath = params.reportPath;
     // Flag a chain-exhausted failure (every fallback brain failed verification) so
     // the UI groups it into the red "failed" category with a confirm-gated re-run,
     // rather than listing it as a green success. Covers BOTH completion paths — the
@@ -421,15 +421,14 @@ export class Store {
     delete task.claimedAt;
     delete task.claimedBy;
     delete task.completedAt;
-    delete task.reportPath;
     this.saveTask(task);
     this.eventBus.emitTaskCreated(task);   // nudge live dashboards to refresh
     return task;
   }
 
-  /** Persistent per-task artifacts dir (sibling of reports/ and inputs/). */
+  /** Persistent per-task artifacts dir. */
   private artifactsDir(taskId: string): string {
-    return path.resolve(this.config.paths.reports, '..', 'artifacts', path.basename(taskId));
+    return path.join(this.config.paths.artifacts, path.basename(taskId));
   }
 
   /**
@@ -540,47 +539,29 @@ export class Store {
 
   /**
    * Delete a task and everything filed under it: its inbox JSON, its artifacts
-   * dir, and every report belonging to it (matched on the report's taskId, plus
-   * the task's own reportPath for reports filed before taskId existed).
+   * dir, and its input files.
    */
-  public deleteTask(id: string): { deleted: boolean; reports: number; artifacts: boolean } {
+  public deleteTask(id: string): { deleted: boolean; artifacts: boolean } {
     const task = this.getTask(id);
-    if (!task) return { deleted: false, reports: 0, artifacts: false };
+    if (!task) return { deleted: false, artifacts: false };
     // getTask resolves short ids by prefix, so `id` may be an 8-char short id.
-    // Everything below keys off the canonical full UUID to avoid orphaning the
-    // task file / reports / artifacts when deleted by short id.
+    // Everything below keys off the canonical full UUID so a short-id delete
+    // can't orphan the task file / artifacts / inputs.
     const fullId = task.id;
 
-    // Reports filed for this task.
-    let reports = 0;
-    const reportsDir = this.config.paths.reports;
-    for (const file of globSync('*.md', { cwd: reportsDir })) {
-      const full = path.join(reportsDir, file);
-      try {
-        const fm = matter(fs.readFileSync(full, 'utf-8')).data as any;
-        if (fm?.taskId === fullId) { fs.rmSync(full); reports++; }
-      } catch { /* unreadable report — leave it alone */ }
-    }
-    // Legacy link: reports predating taskId are only reachable via reportPath.
-    if (task.reportPath && fs.existsSync(task.reportPath) && task.reportPath.startsWith(reportsDir)) {
-      try { fs.rmSync(task.reportPath); reports++; } catch { /* already gone */ }
-    }
-
-    // Artifacts dir (siblings of reports/, keyed by task id).
-    const artDir = path.resolve(reportsDir, '..', 'artifacts', fullId);
+    const artDir = path.join(this.config.paths.artifacts, fullId);
     let artifacts = false;
     if (fs.existsSync(artDir)) {
       try { fs.rmSync(artDir, { recursive: true, force: true }); artifacts = true; } catch { /* ignore */ }
     }
 
-    // Input files dir (sibling of artifacts/, keyed by task id).
-    const inDir = path.resolve(reportsDir, '..', 'inputs', fullId);
+    const inDir = path.join(this.config.paths.inputs, fullId);
     if (fs.existsSync(inDir)) {
       try { fs.rmSync(inDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     fs.rmSync(path.join(this.config.paths.inbox, `${fullId}.json`), { force: true });
-    return { deleted: true, reports, artifacts };
+    return { deleted: true, artifacts };
   }
 
   /**
@@ -594,13 +575,13 @@ export class Store {
    */
   public purgeTasks(opts: { olderThanDays?: number; dryRun?: boolean } = {}): {
     purged: Array<{ id: string; title: string; completedAt?: string }>;
-    keptCount: number; reportsDeleted: number; dryRun: boolean;
+    keptCount: number; dryRun: boolean;
   } {
     const days = opts.olderThanDays ?? 30;
     const cutoff = Date.now() - days * 86400000;
     const keepTags = new Set(['keep', 'important', 'pinned']);
     const purged: Array<{ id: string; title: string; completedAt?: string }> = [];
-    let keptCount = 0, reportsDeleted = 0;
+    let keptCount = 0;
 
     for (const task of this.listTasks({})) {
       const finished = task.status === 'done' || task.status === 'rejected';
@@ -610,9 +591,9 @@ export class Store {
       if (!finished || when >= cutoff || hasArtifacts || tagged) { keptCount++; continue; }
 
       purged.push({ id: task.id, title: task.title, completedAt: task.completedAt });
-      if (!opts.dryRun) reportsDeleted += this.deleteTask(task.id).reports;
+      if (!opts.dryRun) this.deleteTask(task.id);
     }
-    return { purged, keptCount, reportsDeleted, dryRun: !!opts.dryRun };
+    return { purged, keptCount, dryRun: !!opts.dryRun };
   }
 
   /** Persist arbitrary task mutations (handover, retries). */
@@ -722,7 +703,7 @@ export class Store {
         console.error(`Failed to parse task ${id}`, e);
       }
     }
-    // Slow path: the UI, reports and chat all surface an 8-char SHORT id
+    // Slow path: the UI and chat both surface an 8-char SHORT id
     // (first UUID segment, e.g. "6e7fa48c"). When a caller looks a task up by
     // that short id the exact match above misses, even though the task exists
     // on disk as "6e7fa48c-….json". Resolve the short id by prefix.
@@ -788,101 +769,8 @@ export class Store {
     return tasks;
   }
 
-  public fileReport(params: { title: string; type: string; author_platform: string; author_agent: string; content: string; status?: 'draft' | 'review' | 'final'; tags?: string[]; task_id?: string }): Report {
-    const id = uuidv4();
-    const now = new Date().toISOString();
-    
-    const frontmatter = {
-      id,
-      ...(params.task_id ? { taskId: params.task_id } : {}),
-      title: params.title,
-      type: params.type,
-      author: {
-        platform: params.author_platform,
-        agent: params.author_agent
-      },
-      createdAt: now,
-      status: params.status || 'draft',
-      tags: params.tags || []
-    };
-    
-    // Serialize frontmatter separately and append the body verbatim.
-    // matter.stringify(content, …) PARSES the content for an existing
-    // frontmatter block first — agent output that happens to start with
-    // `---` (but isn't valid YAML) threw YAMLException and lost the report.
-    const fmBlock = matter.stringify('', frontmatter).trimEnd();
-    const fileContent = `${fmBlock}\n\n${params.content}\n`;
-    const fileName = `${id}.md`;
-    const filePath = path.join(this.config.paths.reports, fileName);
-    
-    fs.writeFileSync(filePath, fileContent);
-    
-    const report: Report = {
-      id,
-      ...(params.task_id ? { taskId: params.task_id } : {}),
-      title: params.title,
-      type: params.type,
-      author: frontmatter.author,
-      createdAt: now,
-      status: frontmatter.status as any,
-      tags: frontmatter.tags,
-      filePath,
-      summary: params.content.substring(0, 200) + (params.content.length > 200 ? '...' : '')
-    };
-    
-    this.eventBus.emitReportFiled(report);
-    return report;
-  }
 
-  public getReport(id: string): (Report & { content?: string }) | null {
-    const filePath = path.join(this.config.paths.reports, `${id}.md`);
-    if (fs.existsSync(filePath)) {
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const parsed = matter(content);
-        return {
-          ...parsed.data,
-          filePath,
-          summary: parsed.content.substring(0, 200) + (parsed.content.length > 200 ? '...' : ''),
-          content: parsed.content
-        } as Report & { content: string };
-      } catch (e) {
-        console.error(`Failed to parse report ${id}`, e);
-      }
-    }
-    return null;
-  }
 
-  public listReports(filters?: { type?: string; platform?: string; limit?: number }): Report[] {
-    const reportFiles = globSync('*.md', { cwd: this.config.paths.reports });
-    let reports: Report[] = [];
-    
-    for (const file of reportFiles) {
-      try {
-        const fullPath = path.join(this.config.paths.reports, file);
-        const content = fs.readFileSync(fullPath, 'utf-8');
-        const parsed = matter(content);
-        reports.push({
-          ...parsed.data,
-          filePath: fullPath,
-          summary: parsed.content.substring(0, 200) + (parsed.content.length > 200 ? '...' : '')
-        } as Report);
-      } catch (e) {
-        // ignore bad files
-      }
-    }
-    
-    reports.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    
-    if (filters?.type) reports = reports.filter(r => r.type === filters.type);
-    if (filters?.platform) reports = reports.filter(r => r.author?.platform === filters.platform);
-    
-    if (filters?.limit && filters.limit > 0) {
-      reports = reports.slice(0, filters.limit);
-    }
-    
-    return reports;
-  }
 
   public getRoster(filters?: { search?: string; division?: string }): AgentCard[] {
     if (filters?.search) {
@@ -919,7 +807,6 @@ export class Store {
     const completed = tasks.filter(t => t.status === 'done').length;
     const failed = tasks.filter(t => t.status === 'done' && (t as any).failed === true).length;
     
-    const recentReports = this.listReports({ limit: 5 }).length;
     
     const platformStatus: Record<string, boolean> = {};
     for (const [id, p] of Object.entries(this.config.platforms)) {
@@ -935,7 +822,6 @@ export class Store {
         completed,
         failed
       },
-      recentReports,
       platformStatus,
       rosterCount: this.roster.loadAll().length,
       uptime: Math.floor((Date.now() - this.startTime) / 1000)

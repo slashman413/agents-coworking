@@ -4,9 +4,6 @@ dist/
 *.log
 .DS_Store
 inbox/*.json
-# Runtime output — agents also write into subdirs (reports/daily/…), which a
-# single-level glob misses, so match recursively.
-reports/**/*.md
 decisions/*.md
 server/hermes-*.md
 docs/backlink-*.md

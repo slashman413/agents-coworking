@@ -10,6 +10,10 @@ is the shared coordination hub for all AI agents on this box. Repo:
 `~/workspace/github/slashman413/cowork`. Dashboard: http://localhost:6868/
 (remote: http://<lan-ip>:6868 LAN / http://<tailscale-ip>:6868 Tailscale).
 
+> **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
+> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> rather than guess when blocked. They are injected into your prompt automatically.
+
 ## Workflow
 
 1. **Register once per session** before other calls — and **declare your local Claude
@@ -40,8 +44,6 @@ is the shared coordination hub for all AI agents on this box. Repo:
    Add `context: {"role": "<role>"}` (see below) to have the server execute it automatically.
 4. **Work the inbox**: `list_inbox(status: "pending")` → `claim_task(task_id, agent_id)` →
    do the work → `complete_task(task_id, result, report_path?)`.
-5. **Report**: `file_report(title, type, author_platform, author_agent, content, status?, tags?)`
-   for durable cross-agent write-ups (markdown in `reports/`).
 6. **Situational awareness**: `get_dashboard()`, `get_roster(search?, category?)` (285 agents / 19 divisions).
 
 ## Dispatcher — automatic execution (two-stage roster routing)

@@ -17,7 +17,8 @@ function makeStore(): { store: Store; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-continue-'));
   const paths = {
     inbox: path.join(root, 'inbox'),
-    reports: path.join(root, 'reports'),
+    artifacts: path.join(root, 'artifacts'),
+    inputs: path.join(root, 'inputs'),
     status: path.join(root, 'status'),
     decisions: path.join(root, 'decisions'),
     workflows: path.join(root, 'workflows'),

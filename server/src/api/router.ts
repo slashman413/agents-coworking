@@ -65,7 +65,7 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
   router.patch('/inbox/:id', async (req, res) => {
     try {
       const taskId = req.params.id;
-      const { action, agentId, result, reportPath } = req.body;
+      const { action, agentId, result } = req.body;
       let task = null;
 
       if (action === 'claim') {
@@ -75,7 +75,7 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         // completeTask runs the completion guard: a remote brain that reports a
         // soft failure (rate limit / session limit / empty) is handed to the next
         // fallback brain and the task stays pending instead of being marked done.
-        task = await store.completeTask({ taskId, result, reportPath });
+        task = await store.completeTask({ taskId, result });
       } else {
         throw new Error('Invalid action');
       }
@@ -167,27 +167,11 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
     }
   });
 
-  // Delete one task + its reports + its artifacts.
+  // Delete one task + its artifacts + its input files.
   router.delete('/inbox/:id', (req, res) => {
     const out = store.deleteTask(req.params.id);
     if (!out.deleted) return res.status(404).json({ error: 'Task not found' });
     res.json({ ok: true, ...out });
-  });
-
-  router.get('/reports', (req, res) => {
-    res.json(store.listReports({
-      type: req.query.type as string,
-      platform: req.query.platform as string,
-      limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined
-    }));
-  });
-
-  router.get('/reports/:id', (req, res) => {
-    const report = store.getReport(req.params.id);
-    if (!report) {
-      return res.status(404).json({ error: 'Report not found' });
-    }
-    res.json(report);
   });
 
   router.get('/roster', (req, res) => {

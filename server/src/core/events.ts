@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { CoworkEventPayloads, CoworkEventType, ActiveAgent, Task, Report } from '../types.js';
+import type { CoworkEventPayloads, CoworkEventType, ActiveAgent, Task } from '../types.js';
 
 export class EventBus extends EventEmitter {
   public emitEvent<T extends CoworkEventType>(type: T, payload: CoworkEventPayloads[T]): void {
@@ -26,10 +26,6 @@ export class EventBus extends EventEmitter {
 
   public emitTaskCompleted(task: Task): void {
     this.emitEvent('taskCompleted', { task });
-  }
-
-  public emitReportFiled(report: Report): void {
-    this.emitEvent('reportFiled', { report });
   }
 
   public emitHeartbeat(agentId: string, status: string, currentTask?: string): void {

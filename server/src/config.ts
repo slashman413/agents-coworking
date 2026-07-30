@@ -47,7 +47,8 @@ const defaultConfig: Config = {
   paths: {
     agencyAgents: './agency-agents',
     inbox: './inbox',
-    reports: './reports',
+    artifacts: './artifacts',
+    inputs: './inputs',
     status: './.status',
     decisions: './decisions',
     workflows: './workflows'

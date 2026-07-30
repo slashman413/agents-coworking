@@ -5,6 +5,10 @@
 This document defines the conventions and schemas used by the Cowork MCP Server
 for multi-platform agent coordination.
 
+> **Executing a task?** The binding operating rules are in **[CONVENTIONS.md](CONVENTIONS.md)** —
+> they are injected into every dispatched prompt. Task output goes to
+> `artifacts/<task-id>/`; there is no separate report store.
+
 ---
 
 ## 1. Frontmatter Schema (Universal Agent Format)
@@ -63,8 +67,7 @@ Tasks are stored as JSON files in the `inbox/` directory:
   "claimedAt": null,
   "claimedBy": null,
   "completedAt": null,
-  "result": null,
-  "reportPath": null
+  "result": null
 }
 ```
 
@@ -90,38 +93,9 @@ normal scheduling. Tasks without an interaction packet start directly at `pendin
 | `high` | Time-sensitive, blocks other work |
 | `urgent` | Drop everything, handle immediately |
 
-## 3. Report Schema
+## 3. MCP Tools Reference
 
-Reports are markdown files with YAML frontmatter in `reports/`:
-
-```yaml
----
-id: report-20260723-def456
-title: Code Review — saas-starter auth middleware
-type: code-review
-author:
-  platform: claude
-  agent: engineering-code-reviewer
-createdAt: 2026-07-23T15:30:00.000Z
-status: final
-tags: [code-review, saas-starter, auth]
----
-
-# Code Review: saas-starter auth middleware
-
-## Summary
-...
-
-## Findings
-### 🔴 Blockers
-...
-### 🟡 Suggestions
-...
-```
-
-## 4. MCP Tools Reference
-
-The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
+The Cowork MCP Server exposes these tools via Streamable HTTP at `/mcp`:
 
 | Tool | Purpose |
 |------|---------|
@@ -133,8 +107,6 @@ The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
 | `claim_task` | Claim a pending task |
 | `complete_task` | Mark task as done |
 | `list_inbox` | List tasks with filters |
-| `file_report` | File a structured report |
-| `list_reports` | List reports with filters |
 | `get_dashboard` | Get aggregated dashboard data |
 
 **Routing context** — the dispatcher reads these `task.context` fields:
@@ -143,7 +115,7 @@ The Cowork MCP Server exposes 10 tools via Streamable HTTP at `/mcp`:
 here so its client can claim the task), and `division` (override the routed
 division). With none set, the two-stage router picks division → roster agent.
 
-## 5. SSE Events
+## 4. SSE Events
 
 The server pushes real-time events via Server-Sent Events at `/api/events`:
 
@@ -155,9 +127,8 @@ The server pushes real-time events via Server-Sent Events at `/api/events`:
 | `task_created` | `{ task }` |
 | `task_claimed` | `{ taskId, claimedBy }` |
 | `task_completed` | `{ taskId, result }` |
-| `report_filed` | `{ report }` |
 
-## 6. REST API
+## 5. REST API
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -166,8 +137,6 @@ The server pushes real-time events via Server-Sent Events at `/api/events`:
 | GET | `/api/inbox` | Task list (query: status, platform, limit) |
 | POST | `/api/inbox` | Create task |
 | PATCH | `/api/inbox/:id` | Claim or complete task |
-| GET | `/api/reports` | Report list |
-| GET | `/api/reports/:id` | Single report |
 | GET | `/api/roster` | Agent roster (query: division, search) |
 | GET | `/api/roster/divisions` | Division metadata |
 | GET | `/api/config` | Current configuration |
