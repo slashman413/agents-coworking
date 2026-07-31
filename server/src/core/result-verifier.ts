@@ -238,6 +238,23 @@ export const DEFAULT_QUESTION_PATTERNS: string[] = [
   'do you want me to proceed with',
   'should i proceed with',
   'would you like me to proceed',
+  // "I've stopped; you pick the next step" — a question-only result offering a menu
+  // of options and asking the user to choose. Common when the brief was ambiguous,
+  // so the agent produced no deliverable and handed the decision back. These stranded
+  // real tasks as `done` before being added (see f8ec5d00 / 54f9ee5b regressions).
+  // Kept specific enough to skip a finished deliverable's polite sign-off
+  // ("let me know if you want changes").
+  'how would you like to proceed',
+  'how would you like me to proceed',
+  'how should i proceed',
+  'what would you like to do next',
+  'what would you like me to do',
+  'what should i do next',
+  'please let me know which',
+  'please let me know the next step',
+  'please let me know how you',
+  "let me know how you'd like to proceed",
+  'let me know how you would like to proceed',
 ];
 
 const GENERIC_QUESTION = 'The agent needs more information to proceed. Please provide guidance.';

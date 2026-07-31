@@ -145,6 +145,42 @@ test('a deliverable containing rhetorical questions is NOT parked', () => {
   assert.equal(r.needsInput, false);
 });
 
+test('a "how would you like to proceed" next-step menu is parked (real done-task regression)', () => {
+  // Reproduces a task that was wrongly marked done: a question-only result with no
+  // deliverable, offering the user a menu of next steps. See f8ec5d00.
+  const r = detectInputRequest(
+    'It looks like the AI Workflow Builder repo is already set up and all tests are passing. How would you like to proceed?\n\n' +
+    '- Do you want to add a new feature or component?\n' +
+    '- Would you like to adjust the design, UI, or API?\n' +
+    '- Or do you need help deploying, documenting, or publishing the project?\n\n' +
+    "Please let me know the next step you'd like to take.");
+  assert.equal(r.needsInput, true);
+  assert.ok(r.questions.some(q => /how would you like to proceed/i.test(q)));
+});
+
+test('a "what would you like to do next" prompt-menu is parked (real done-task regression)', () => {
+  // Reproduces a second wrongly-done task: batch produced, then the agent asks the
+  // user to choose what to do next. See 54f9ee5b.
+  const r = detectInputRequest(
+    'It looks like you have a batch of 239 Agent Cat image prompts stored in artifacts/x/prompts.json.\n\n' +
+    'What would you like to do next with these prompts?\n\n' +
+    '- (Recommended) Generate the images now via your ComfyUI + Flux pipeline.\n' +
+    '- Review or edit the prompt list before generation.\n' +
+    '- Export the prompts to another format.\n\n' +
+    "Please let me know which action you'd like to take, or provide any additional details.");
+  assert.equal(r.needsInput, true);
+  assert.ok(r.questions.some(q => /what would you like to do next/i.test(q)));
+});
+
+test('a finished deliverable that offers a polite follow-up is NOT parked', () => {
+  // Guard the new next-step patterns against a real deliverable that merely signs
+  // off with an open offer — no menu, no "how would you like to proceed".
+  const r = detectInputRequest(
+    '# Migration Report\n\nAll 12 tables migrated successfully and verified.\n\n' +
+    'Let me know if you want a rollback script as well.');
+  assert.equal(r.needsInput, false);
+});
+
 test('detection can be disabled', () => {
   const r = detectInputRequest('NEEDS_INPUT: which one?', { disabled: true });
   assert.equal(r.needsInput, false);
