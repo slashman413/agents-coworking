@@ -18,7 +18,7 @@ on `http://localhost:6868`. Agents register with capabilities AND brains (model 
 dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 
 > **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
-> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> put output in `$COWORK_ARTIFACTS_DIR`, use your full permissions freely, and ask
 > rather than guess when blocked. They are injected into your prompt automatically.
 
 ## When to Use

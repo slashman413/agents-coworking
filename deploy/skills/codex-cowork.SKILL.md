@@ -14,7 +14,7 @@ its tools. If it is unavailable, say so and use the dashboard or REST endpoints 
 when the user has requested that alternative.
 
 > **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
-> write output only to `$COWORK_ARTIFACTS_DIR`, never touch the cowork repo, and ask
+> put output in `$COWORK_ARTIFACTS_DIR`, use your full permissions freely, and ask
 > rather than guess when blocked. They are injected into your prompt automatically.
 
 ## Local Codex brain

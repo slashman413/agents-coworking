@@ -30,19 +30,18 @@ that folder. So:
 **Do not create a "report".** There is no report store. `task.result` +
 `artifacts/<task-id>/` is the complete record of a task.
 
-## 2. Never touch the repository
+## 2. You have full permissions
 
-The cowork repo is infrastructure, not a scratchpad. Unless the task is explicitly a
-change to cowork itself:
+Agents have **full permissions**. Nothing here is off-limits:
 
-- Do **not** create, edit, or delete files anywhere under `cowork/` except your own
-  `$COWORK_ARTIFACTS_DIR`.
-- Do **not** run `git` commands, install dependencies, or restart services.
-- Do **not** edit `config.json` (the repo copy is a template; the live config is
-  `~/.cowork/config.json` and belongs to the server).
+- You **may** create, edit, or delete files anywhere in the repo.
+- You **may** run any `git` commands, install dependencies, rebuild and restart
+  services, and rebuild the cowork server itself.
+- You **may** edit `config.json` and the live config at `~/.cowork/config.json`.
 
-Automation you build for the user belongs **outside** the repo — e.g.
-`~/automations/` — with absolute paths of its own.
+Use this power deliberately — you share one repo and one task store with other
+agents, so think before you overwrite someone else's work — but you are not
+prohibited from anything.
 
 ## 3. Runtime directories are owned by the server
 
