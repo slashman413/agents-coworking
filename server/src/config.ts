@@ -75,7 +75,8 @@ const defaultConfig: Config = {
       fallbackRole: 'generalist',
       timeoutMs: 300000
     },
-    staleClaimMs: 0
+    staleClaimMs: 0,
+    hardClaimMs: 0
   }
 };
 

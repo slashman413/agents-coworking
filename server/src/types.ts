@@ -136,9 +136,17 @@ export interface OrchestrationConfig {
   /** Result verifier — rejects soft failures (rate-limit/empty/refusal) that
    *  exited 0, so they trigger a fallback-brain handover instead of "done". */
   verifier?: VerifierConfig;
-  /** Reclaim in-progress tasks whose claiming agent is gone after this many
-   *  ms (0 disables). Rescues work orphaned by a crashed/exited agent. */
+  /** Reclaim in-progress tasks whose claim has gone dead after this many ms
+   *  (0 disables). A claim is dead once older than this AND the claimer has
+   *  vanished OR reports itself `idle` (its run finished/crashed without a
+   *  complete_task). Rescues work orphaned by a crashed/exited agent OR by a
+   *  live-but-idle client that dropped its child. */
   staleClaimMs?: number;
+  /** Absolute ceiling (ms) on an in-progress claim regardless of what the
+   *  claimer reports: past this, the task is reclaimed even if the claimer still
+   *  heartbeats `working` — a backstop for a client wedged on a hung child.
+   *  0/undefined disables the ceiling (only staleClaimMs applies). */
+  hardClaimMs?: number;
   /** Safety bound on an orchestrated workflow run: the max number of steps the
    *  orchestrator may dispatch before the run is force-finished (prevents a
    *  runaway decision loop). Default 12. */

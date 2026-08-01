@@ -99,6 +99,7 @@
       }
     },
     "staleClaimMs": 600000,
+    "hardClaimMs": 5400000,
     "maxWorkflowSteps": 12,
     "defaultChain": [
       "local-ha-qwen35b",

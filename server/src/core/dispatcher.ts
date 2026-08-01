@@ -350,28 +350,53 @@ export class Dispatcher {
   }
 
   /**
-   * Reclaim in-progress/claimed tasks whose claiming agent is no longer active.
-   * Covers dispatcher restarts AND live agents that claimed work then died.
-   * A task still owned by a heartbeating agent (or currently running here) is
-   * left alone. Gated by orchestration.staleClaimMs (0 disables).
+   * Reclaim in-progress/claimed tasks that are no longer actually being worked.
+   *
+   * A local/remote brain CLIENT heartbeats continuously (keep-alive) whether or
+   * not its claimed execution is still alive — so the old "claimer gone from the
+   * roster" test never fired for the common failure: a client whose child CLI
+   * crashed / OOM'd / finished without a complete_task call, leaving the task
+   * `in-progress` forever while the client sits `idle` on the roster. (Observed:
+   * a Phase-3 task stuck 3h, claimed by a live-but-idle hermes client.)
+   *
+   * A claim is treated as DEAD — and the task re-queued to `pending` — when it is
+   * older than staleClaimMs AND any of:
+   *   • the claimer has vanished from the roster (crash/exit), OR
+   *   • the claimer is still on the roster but reports itself `idle` — its
+   *     `running` set is empty, so it is provably not executing this (or any)
+   *     task; a stranded claim, OR
+   *   • the claim age exceeds the absolute ceiling hardClaimMs — a backstop for a
+   *     client wedged on a hung child that keeps reporting `working` (no task
+   *     legitimately runs longer than the ceiling; the dispatcher itself kills
+   *     local spawns at taskTimeoutMs).
+   * A task the dispatcher is running here (`this.running`) or one owned by a
+   * heartbeating agent that reports `working` within the window is left alone.
+   * Gated by orchestration.staleClaimMs (0 disables).
    */
   private reclaimStaleClaims(): void {
-    const staleMs = this.config.orchestration.staleClaimMs ?? 0;
+    const orch = this.config.orchestration;
+    const staleMs = orch.staleClaimMs ?? 0;
     if (staleMs <= 0) return;
-    const activeIds = new Set(this.store.getActiveAgents().map(a => a.id));
+    const hardMs = orch.hardClaimMs && orch.hardClaimMs > 0 ? orch.hardClaimMs : Infinity;
+    const active = new Map(this.store.getActiveAgents().map(a => [a.id, a]));
     for (const t of this.store.listTasks({ status: 'in-progress' })) {
-      if (this.running.has(t.id)) continue;
+      if (this.running.has(t.id)) continue;   // this dispatcher (and its workers) owns it
       const claimAge = t.claimedAt ? Date.now() - new Date(t.claimedAt).getTime() : Infinity;
-      const claimerGone = !t.claimedBy || !activeIds.has(t.claimedBy);
-      if (claimerGone && claimAge > staleMs) {
-        t.status = 'pending';
-        const prevClaimer = t.claimedBy;
-        delete t.claimedAt;
-        delete t.claimedBy;
-        t.context = { ...(t.context || {}), dispatched: false };
-        this.store.saveTask(t);
-        console.log(`Dispatcher: reclaimed stale task ${t.id} (claimer ${prevClaimer ?? '?'} gone) — ${t.title}`);
-      }
+      if (claimAge <= staleMs) continue;       // give a live claimer the full grace window first
+      const claimer = t.claimedBy ? active.get(t.claimedBy) : undefined;
+      // Why the claim is considered dead — drives the log line and the guard.
+      let reason: string | null = null;
+      if (!claimer) reason = 'claimer gone';
+      else if (claimer.status === 'idle') reason = 'claimer idle';   // running set empty → not working it
+      else if (claimAge > hardMs) reason = `claim exceeded hard ceiling ${hardMs}ms`;
+      if (!reason) continue;                    // claimer present and reports working within the window
+      t.status = 'pending';
+      const prevClaimer = t.claimedBy;
+      delete t.claimedAt;
+      delete t.claimedBy;
+      t.context = { ...(t.context || {}), dispatched: false };
+      this.store.saveTask(t);
+      console.log(`Dispatcher: reclaimed stale task ${t.id} (${reason}: ${prevClaimer ?? '?'}) — ${t.title}`);
     }
   }
 
