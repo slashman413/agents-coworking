@@ -98,9 +98,9 @@ async function main() {
     console.log(`=========================================`);
   });
 
-  // Stale agent cleanup every 5 minutes, 10 min timeout (600000ms)
+  // Stale agent cleanup every 5 minutes, ~3 min timeout (200000ms)
   const cleanup = setInterval(() => {
-    store.removeStaleAgents(600000);
+    store.removeStaleAgents(200000);
   }, 300000);
 
 

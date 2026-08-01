@@ -412,7 +412,7 @@ export class Dispatcher {
     if (cls && cls.enabled === false) { this.assignAgent(task, 'generalist', undefined); return; }
     if (this.classifying.has(task.id)) return;
     this.classifying.add(task.id);
-    const timeout = cls?.timeoutMs || 900000;
+    const timeout = cls?.timeoutMs || 300000;
     const divisions = this.store.divisionIds();
     const divMeta = this.store.getDivisions() || {};
 
@@ -506,7 +506,7 @@ export class Dispatcher {
       }
 
       this.decidingRuns.add(rec.runId);
-      const timeout = this.config.orchestration.classifier?.timeoutMs || 900000;
+      const timeout = this.config.orchestration.classifier?.timeoutMs || 300000;
       const keys = ctx.available.map(s => s.key);
       const prompt = this.orchestratorPrompt(ctx);
 
@@ -753,7 +753,7 @@ export class Dispatcher {
       const reply = await new Promise<string>((resolve) => {
         const child = spawn(argv[0], argv.slice(1), { env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
         let out = '';
-        const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(out); }, cfg.llm!.timeoutMs || 300000);
+        const timer = setTimeout(() => { child.kill('SIGTERM'); resolve(out); }, cfg.llm!.timeoutMs || 120000);
         child.stdout.on('data', d => { out += d.toString(); });
         child.on('error', () => resolve(''));
         child.on('close', () => { clearTimeout(timer); resolve(stripAnsi(out)); });
