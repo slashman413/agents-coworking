@@ -14,7 +14,7 @@ import type { Config } from '../types.js';
  *   2. The FAILED category + confirm-gated re-run — completeTask flags a
  *      chain-exhausted result, and rerunTask resets such a task to pending.
  */
-function makeStore(): { store: Store; root: string } {
+function makeStore(brains: Record<string, unknown> = {}): { store: Store; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-inputs-'));
   const paths = {
     inbox: path.join(root, 'inbox'),
@@ -26,7 +26,7 @@ function makeStore(): { store: Store; root: string } {
     agencyAgents: path.join(root, 'agency-agents'),
   };
   for (const p of Object.values(paths)) fs.mkdirSync(p, { recursive: true });
-  const config = { paths, orchestration: { brains: {} } } as unknown as Config;
+  const config = { paths, orchestration: { brains } } as unknown as Config;
   return { store: new Store(config, new EventBus()), root };
 }
 
@@ -140,6 +140,31 @@ test('rerunTask keeps a USER brain pin (no brainAuto) so the same brain is retri
   await store.completeTask({ taskId: task.id, result: 'FAILED after 2 attempt(s) (chain exhausted). Brains that failed: remote-opus. Last output: x', internal: true });
   const rerun = store.rerunTask(task.id);
   assert.equal(rerun?.context?.brain, 'remote-opus', 'a deliberate user pin survives the re-run');
+});
+
+test('rerunTask re-targets a failed task to a chosen (known) brain as a user pin', async () => {
+  const { store } = makeStore({ 'remote-opus': {}, 'remote-sonnet': {} });
+  const task = store.createTask({ title: 'retarget', from: { platform: 'p', agent: 'a' }, context: { brain: 'remote-opus', brainAuto: true, attempts: 3 } } as any);
+  await store.completeTask({ taskId: task.id, result: 'FAILED after 3 attempt(s) (chain exhausted). Brains that failed: remote-opus. Last output: x', internal: true });
+  const rerun = store.rerunTask(task.id, 'remote-sonnet');
+  assert.equal(rerun?.context?.brain, 'remote-sonnet', 're-run pinned to the chosen brain');
+  assert.equal(rerun?.context?.brainAuto, undefined, 'chosen brain is a user pin, not a transient auto pin');
+  assert.equal(rerun?.context?.attempts, 0, 'attempts reset to the top of the chain');
+});
+
+test('rerunTask with a blank brain choice clears even a user pin so routing restarts at the chain', async () => {
+  const { store } = makeStore({ 'remote-opus': {} });
+  const task = store.createTask({ title: 'unpin', from: { platform: 'p', agent: 'a' }, context: { brain: 'remote-opus' } } as any);
+  await store.completeTask({ taskId: task.id, result: 'FAILED after 2 attempt(s) (chain exhausted). Brains that failed: remote-opus. Last output: x', internal: true });
+  const rerun = store.rerunTask(task.id, '');
+  assert.equal(rerun?.context?.brain, undefined, 'blank choice = Auto → the user pin is dropped');
+});
+
+test('rerunTask rejects an unknown brain id', async () => {
+  const { store } = makeStore({ 'remote-opus': {} });
+  const task = store.createTask({ title: 'bad', from: { platform: 'p', agent: 'a' } } as any);
+  await store.completeTask({ taskId: task.id, result: 'FAILED after 3 attempt(s) (chain exhausted). Brains that failed: x. Last output: y', internal: true });
+  assert.throws(() => store.rerunTask(task.id, 'ghost-brain'), /Unknown brain/, 'unknown brain is refused');
 });
 
 test('rerunTask refuses a task that did not fail', async () => {

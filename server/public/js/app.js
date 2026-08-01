@@ -282,6 +282,50 @@ class App {
     setTimeout(() => el.remove(), 5000);
   }
 
+  /**
+   * Confirm a continue/re-run AND let the user choose which brain claims the
+   * task. Renders the shared #modal-container with a brain <select> (populated
+   * from /api/brains, "Auto" = route via the agent's chain). Resolves to
+   * { brain } — '' meaning Auto — or null if the user cancels. `defaultBrain`
+   * pre-selects the brain the task would otherwise use.
+   */
+  async pickBrain({ title, body, defaultBrain = '', confirmLabel = 'Confirm', confirmColor = '#22C55E' }) {
+    const container = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+    if (!container || !content) {   // no modal markup → degrade to a plain confirm
+      return window.confirm(`${title}\n\n${body.replace(/<[^>]+>/g, '')}`) ? { brain: defaultBrain } : null;
+    }
+    let brains = {};
+    try { brains = await this.api.get('/brains'); } catch { /* registry unreachable → Auto only */ }
+    const ids = Object.keys(brains).sort();
+    const opts = [`<option value="">🧠 Auto — route via the agent's brain chain</option>`]
+      .concat(ids.map(b => `<option value="${esc(b)}"${b === defaultBrain ? ' selected' : ''}>${esc(b)}</option>`)).join('');
+    content.innerHTML = `
+      <h3 style="margin:0 0 8px; font-size:1.05rem">${esc(title)}</h3>
+      <p style="font-size:0.85rem; color:var(--text-secondary); margin:0 0 16px; line-height:1.5">${body}</p>
+      <label style="display:block; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); margin-bottom:6px">Brain to claim this task</label>
+      <select id="brain-pick" style="width:100%; padding:9px 10px; background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; color:inherit; font-size:0.9rem; margin-bottom:20px">${opts}</select>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn" id="brain-cancel" style="font-size:0.85rem">Cancel</button>
+        <button class="btn" id="brain-ok" style="font-size:0.85rem; color:${confirmColor}; border-color:${confirmColor}66">${esc(confirmLabel)}</button>
+      </div>`;
+    container.classList.remove('hidden');
+    content.querySelector('#brain-pick').focus();
+    return new Promise(resolve => {
+      const close = (val) => {
+        container.classList.add('hidden');
+        content.innerHTML = '';
+        document.removeEventListener('keydown', onKey);
+        resolve(val);
+      };
+      const onKey = (ev) => { if (ev.key === 'Escape') close(null); };
+      document.addEventListener('keydown', onKey);
+      content.querySelector('#brain-ok').onclick = () => close({ brain: content.querySelector('#brain-pick').value });
+      content.querySelector('#brain-cancel').onclick = () => close(null);
+      container.querySelector('.modal-backdrop').onclick = () => close(null);
+    });
+  }
+
   navigate() {
     const hash = window.location.hash.replace('#', '') || 'dashboard';
     this.currentView = hash;
@@ -1024,12 +1068,12 @@ class App {
             <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
           </div>
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
-            ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" title="Re-run this task from the top of its brain chain"
+            ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" data-brain="${esc(c.brainAuto ? '' : (c.brain || ''))}" title="Re-run this task — pick which brain claims it"
               style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
             ${t.status === 'done' && !failed ? (t.context?.continuedInto
               ? `<button class="btn" disabled title="Already continued — a follow-up task was spawned from this run"
               style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E99;border-color:#22C55E33;opacity:.6;cursor:default">✓ Continued</button>`
-              : `<button class="btn" data-continue-task="${esc(t.id)}" title="Continue this task — spawn a follow-up seeded with this run's output files and result, on the same brain"
+              : `<button class="btn" data-continue-task="${esc(t.id)}" data-brain="${esc(brainLabel)}" title="Continue this task — spawn a follow-up seeded with this run's outputs; pick which brain claims it"
               style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>`) : ''}
             <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
               style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
@@ -1104,32 +1148,46 @@ class App {
         } catch (err) { this.toast('error', err.message); }
       }));
 
-    // Re-run a failed task (confirm-gated) — reset to pending, re-dispatch.
+    // Re-run a failed task — pick which brain claims it, then reset to pending.
     this.contentEl.querySelectorAll('[data-rerun-task]').forEach(b =>
       b.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = b.dataset.rerunTask;
         const title = b.closest('[data-task]')?.dataset.title || id.slice(0, 8);
-        if (!confirm(`Re-run this failed task?\n\n${title}\n\nIt will be reset to pending and dispatched again from the top of its brain chain.`)) return;
+        const choice = await this.pickBrain({
+          title: 'Re-run this failed task',
+          body: `<strong>${esc(title)}</strong> is reset to pending and dispatched again. Choose which brain should claim it — pick <em>Auto</em> to route from the top of the agent's brain chain.`,
+          defaultBrain: b.dataset.brain || '',
+          confirmLabel: '↻ Re-run',
+          confirmColor: '#EF4444'
+        });
+        if (!choice) return;
         b.disabled = true;
         try {
-          await this.api.post(`/inbox/${encodeURIComponent(id)}/rerun`);
-          this.toast('re-running', 'Task reset to pending and re-queued.');
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/rerun`, { brain: choice.brain });
+          this.toast('re-running', choice.brain ? `Reset to pending — pinned to ${choice.brain}.` : 'Reset to pending — auto-routed via the brain chain.');
           this.renderInbox();
         } catch (err) { this.toast('error', err.message); b.disabled = false; }
       }));
 
-    // Continue a done task — spawn a follow-up seeded with this run's outputs.
+    // Continue a done task — pick which brain claims the follow-up.
     this.contentEl.querySelectorAll('[data-continue-task]').forEach(b =>
       b.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = b.dataset.continueTask;
         const title = b.closest('[data-task]')?.dataset.title || id.slice(0, 8);
-        if (!confirm(`Continue this task?\n\n${title}\n\nA new task is created on the same brain, with this run's output files and result attached as inputs, to carry the work forward.`)) return;
+        const choice = await this.pickBrain({
+          title: 'Continue this task',
+          body: `A follow-up to <strong>${esc(title)}</strong> is created with this run's output files and result attached as inputs. Choose which brain should claim it — <em>Auto</em> routes via the agent's brain chain.`,
+          defaultBrain: b.dataset.brain || '',
+          confirmLabel: '▸ Continue',
+          confirmColor: '#22C55E'
+        });
+        if (!choice) return;
         b.disabled = true;
         try {
-          await this.api.post(`/inbox/${encodeURIComponent(id)}/continue`);
-          this.toast('continuing', 'Follow-up task queued with the prior outputs as inputs.');
+          await this.api.post(`/inbox/${encodeURIComponent(id)}/continue`, { brain: choice.brain });
+          this.toast('continuing', choice.brain ? `Follow-up queued — pinned to ${choice.brain}.` : 'Follow-up queued — auto-routed via the brain chain.');
           this.renderInbox();
         } catch (err) { this.toast('error', err.message); b.disabled = false; }
       }));

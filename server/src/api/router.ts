@@ -107,7 +107,10 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
   // this behind an explicit user confirmation (categorize-failed → confirm re-run).
   router.post('/inbox/:id/rerun', (req, res) => {
     try {
-      const task = store.rerunTask(req.params.id);
+      // Optional { brain }: '' → route via the agent's chain, '<id>' → pin that
+      // brain, absent → keep the task's existing brain targeting (default).
+      const brain = typeof req.body?.brain === 'string' ? req.body.brain : undefined;
+      const task = store.rerunTask(req.params.id, brain);
       if (!task) return res.status(404).json({ error: 'Task not found or not in a re-runnable (failed) state' });
       res.json(task);
     } catch (e: any) {
@@ -121,7 +124,10 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
   // on done cards. 201 + the new task (so the UI can jump to it).
   router.post('/inbox/:id/continue', (req, res) => {
     try {
-      const task = store.continueTask(req.params.id);
+      // Optional { brain }: '' → route via the agent's chain, '<id>' → pin that
+      // brain to claim the follow-up, absent → same brain as the original (default).
+      const brain = typeof req.body?.brain === 'string' ? req.body.brain : undefined;
+      const task = store.continueTask(req.params.id, brain);
       if (!task) return res.status(400).json({ error: 'Task not found or not in a continuable (finished-success) state' });
       res.status(201).json(task);
     } catch (e: any) {

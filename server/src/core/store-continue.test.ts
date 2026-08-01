@@ -13,7 +13,7 @@ import type { Config } from '../types.js';
  * pinned to the same executor. Failed/unfinished tasks are refused (they use
  * rerunTask instead).
  */
-function makeStore(): { store: Store; root: string } {
+function makeStore(brains: Record<string, unknown> = {}): { store: Store; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cowork-continue-'));
   const paths = {
     inbox: path.join(root, 'inbox'),
@@ -25,7 +25,7 @@ function makeStore(): { store: Store; root: string } {
     agencyAgents: path.join(root, 'agency-agents'),
   };
   for (const p of Object.values(paths)) fs.mkdirSync(p, { recursive: true });
-  const config = { paths, orchestration: { brains: {} } } as unknown as Config;
+  const config = { paths, orchestration: { brains } } as unknown as Config;
   return { store: new Store(config, new EventBus()), root };
 }
 
@@ -117,4 +117,48 @@ test('continueTask refuses an unfinished task and a missing task', () => {
   const pending = store.createTask({ title: 'still going', from: { platform: 'p', agent: 'a' } } as any);
   assert.equal(store.continueTask(pending.id), null, 'a pending task is not continuable');
   assert.equal(store.continueTask('does-not-exist'), null, 'a missing task returns null');
+});
+
+// ── Brain override: choose which brain claims the continuation ──────────────
+test('continueTask pins the follow-up to a chosen (known) brain instead of the original one', async () => {
+  const { store } = makeStore({ 'remote-opus': {}, 'remote-sonnet': {} });
+  const orig = store.createTask({
+    title: 'keep building', from: { platform: 'p', agent: 'a' },
+    context: { ranAgent: 'software-architect', ranBrain: 'remote-opus' }
+  } as any);
+  await store.completeTask({ taskId: orig.id, result: 'phase 1 done', internal: true });
+
+  const next = store.continueTask(orig.id, 'remote-sonnet')!;
+  assert.equal(next.context?.brain, 'remote-sonnet', 'follow-up pinned to the chosen brain');
+  assert.equal(next.context?.brainAuto, undefined, 'a chosen brain is a USER pin, not a transient auto pin');
+  assert.equal(next.context?.agent, 'software-architect', 'agent assignment still carried over');
+});
+
+test('continueTask with a blank brain choice clears the pin so the agent chain routes it', async () => {
+  const { store } = makeStore({ 'remote-opus': {} });
+  const orig = store.createTask({
+    title: 'route me', from: { platform: 'p', agent: 'a' },
+    context: { ranAgent: 'software-architect', ranBrain: 'remote-opus' }
+  } as any);
+  await store.completeTask({ taskId: orig.id, result: 'ok', internal: true });
+
+  const next = store.continueTask(orig.id, '')!;
+  assert.equal(next.context?.brain, undefined, 'blank choice = Auto → no brain pin');
+  assert.equal(next.context?.agent, 'software-architect', 'agent still set so the chain can route');
+});
+
+test('continueTask with no brain arg keeps the original brain (default, unchanged)', async () => {
+  const { store } = makeStore({ 'remote-opus': {} });
+  const orig = store.createTask({
+    title: 'default', from: { platform: 'p', agent: 'a' }, context: { ranBrain: 'remote-opus' }
+  } as any);
+  await store.completeTask({ taskId: orig.id, result: 'ok', internal: true });
+  assert.equal(store.continueTask(orig.id)!.context?.brain, 'remote-opus', 'same brain when no override given');
+});
+
+test('continueTask rejects an unknown brain id (surfaces as a 400 upstream)', async () => {
+  const { store } = makeStore({ 'remote-opus': {} });
+  const orig = store.createTask({ title: 'bad brain', from: { platform: 'p', agent: 'a' } } as any);
+  await store.completeTask({ taskId: orig.id, result: 'ok', internal: true });
+  assert.throws(() => store.continueTask(orig.id, 'ghost-brain'), /Unknown brain/, 'unknown brain is refused');
 });

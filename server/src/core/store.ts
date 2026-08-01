@@ -394,7 +394,7 @@ export class Store {
    * this behind an explicit confirmation. Returns null if the task is gone or is
    * not in a re-runnable (finished-failed) state.
    */
-  public rerunTask(taskId: string): Task | null {
+  public rerunTask(taskId: string, brainOverride?: string): Task | null {
     const task = this.getTask(taskId);
     if (!task) return null;
     const looksFailed = task.failed === true
@@ -404,11 +404,15 @@ export class Store {
 
     const ctx: Record<string, any> = { ...(task.context || {}) };
     delete ctx.failedBrains;
-    // A user brain pin (context.brain set WITHOUT brainAuto) is intentional — keep
-    // it so the re-run targets the same brain. A dispatcher-published chain pin
-    // (brainAuto) is transient — drop it so routing restarts at the top rung.
-    if (ctx.brainAuto) delete ctx.brain;
+    // Which brain claims the re-run. Default preserves a deliberate USER pin
+    // (context.brain set WITHOUT brainAuto) and drops a dispatcher-published
+    // chain pin (brainAuto, transient). The caller may override that default:
+    // '' clears the pin (route via chain), '<id>' pins that known brain.
+    const existingPin = ctx.brainAuto ? undefined
+      : (typeof ctx.brain === 'string' ? ctx.brain : undefined);
+    const targetBrain = this.resolveBrainOverride(brainOverride, existingPin);
     delete ctx.brainAuto;
+    if (targetBrain) ctx.brain = targetBrain; else delete ctx.brain;
     ctx.attempts = 0;
     ctx.dispatched = false;
     delete ctx.remoteWaitSince;
@@ -484,7 +488,7 @@ export class Store {
    * or emitted (mirrors createTask), so it is never claimable without them.
    * Returns null when the task is gone or not in a continuable state.
    */
-  public continueTask(taskId: string): Task | null {
+  public continueTask(taskId: string, brainOverride?: string): Task | null {
     const prev = this.getTask(taskId);
     if (!prev) return null;
     const isFailed = prev.failed === true
@@ -499,10 +503,14 @@ export class Store {
     const ctx: Record<string, any> = { continuedFrom: prev.id };
     const agent = prevCtx.ranAgent || prevCtx.agent || prevCtx.role;
     const division = prevCtx.ranDivision || prevCtx.division;
-    const brain = prevCtx.ranBrain || prevCtx.brain;
+    const sameBrain = prevCtx.ranBrain || prevCtx.brain;
     if (agent) ctx.agent = agent;
     if (division) ctx.division = division;
-    if (brain) ctx.brain = brain;
+    // Which brain claims the follow-up. The caller may override the same-brain
+    // default (see resolveBrainOverride): undefined keeps the original's brain,
+    // '' routes via the agent's chain ("Auto"), '<id>' pins that known brain.
+    const targetBrain = this.resolveBrainOverride(brainOverride, sameBrain);
+    if (targetBrain) ctx.brain = targetBrain;   // else: no pin → chain routes it
 
     const title = /^continue\b/i.test(prev.title || '') ? prev.title : `Continue: ${prev.title || 'task'}`;
     const description = [
@@ -543,6 +551,24 @@ export class Store {
 
     this.eventBus.emitTaskCreated(task);
     return task;
+  }
+
+  /**
+   * Resolve a caller-supplied brain choice for a continue/re-run into the brain
+   * id to pin (or undefined for "no pin — route via the agent's chain"):
+   *   - `undefined`  → no explicit choice; keep `fallback` (same-brain default)
+   *   - `''` (blank) → explicit "Auto"; return undefined so the chain routes it
+   *   - `'<id>'`     → pin to exactly that brain; MUST exist in the registry
+   * Throws on an unknown brain id so the API surfaces a 400 rather than pinning
+   * a task to a brain that can never claim it.
+   */
+  private resolveBrainOverride(override: string | undefined, fallback: string | undefined): string | undefined {
+    if (override === undefined) return fallback;
+    const v = override.trim();
+    if (!v) return undefined;
+    const brains = this.config.orchestration?.brains || {};
+    if (!brains[v]) throw new Error(`Unknown brain "${v}" — not in the registry`);
+    return v;
   }
 
   /**
