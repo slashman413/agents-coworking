@@ -76,7 +76,7 @@
     "enabled": true,
     "maxConcurrent": 2,
     "pollIntervalMs": 5000,
-    "taskTimeoutMs": 1800000,
+    "taskTimeoutMs": 9000000,
     "defaultRole": "generalist",
     "remoteGraceMs": 60000,
     "classifier": {
@@ -84,7 +84,7 @@
       "exec": "hermes",
       "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
       "fallbackRole": "generalist",
-      "timeoutMs": 180000
+      "timeoutMs": 900000
     },
     "verifier": {
       "_comment": "Rejects soft failures that exit 0 (rate-limit/quota/overloaded/empty replies) so they hand over to the next fallback brain instead of being marked done. failPatterns are merged with the built-ins. Enable llm for an extra LLM quality gate that judges genuine task completion.",
@@ -95,7 +95,7 @@
         "enabled": false,
         "exec": "hermes",
         "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
-        "timeoutMs": 60000
+        "timeoutMs": 300000
       }
     },
     "staleClaimMs": 1800000,

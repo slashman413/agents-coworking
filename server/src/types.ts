@@ -80,7 +80,7 @@ export interface VerifierConfig {
     enabled: boolean;
     exec?: 'claude' | 'hermes' | 'agy' | 'codex' | 'ollama';
     model?: string;
-    /** Wall-clock budget for one verification (ms). Default 60000. */
+    /** Wall-clock budget for one verification (ms). Default 300000. */
     timeoutMs?: number;
   };
 }

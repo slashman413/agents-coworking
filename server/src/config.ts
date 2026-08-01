@@ -63,7 +63,7 @@ const defaultConfig: Config = {
     enabled: false,
     maxConcurrent: 2,
     pollIntervalMs: 5000,
-    taskTimeoutMs: 1800000,
+    taskTimeoutMs: 9000000,
     defaultRole: 'generalist',
     agents: {},
     roles: {},
@@ -73,7 +73,7 @@ const defaultConfig: Config = {
       exec: 'hermes',
       model: 'nvidia/Qwen3.6-35B-A3B-NVFP4',
       fallbackRole: 'generalist',
-      timeoutMs: 180000
+      timeoutMs: 900000
     },
     staleClaimMs: 0
   }

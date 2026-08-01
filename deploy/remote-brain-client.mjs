@@ -31,7 +31,7 @@
 //   COWORK_API_KEY   bearer token if the server sets server.apiKey       (optional)
 //   POLL_MS          inbox poll interval                                 (default 5000)
 //   MAX_CONCURRENT   tasks in parallel across all brains                 (default 1)
-//   TASK_TIMEOUT_MS  per-task wall clock                                 (default 1800000)
+//   TASK_TIMEOUT_MS  per-task wall clock                                 (default 9000000)
 //   AGENT_NAME       display name in Active Agents                       (default HOST/host)
 //
 // Node 18+ (global fetch). No npm install. Run: `node remote-brain-client.mjs`.
@@ -54,7 +54,7 @@ const EXEC_DEFAULT = process.env.EXEC || 'claude';
 const HOST = process.env.HOST || os.hostname();
 const POLL_MS = +(process.env.POLL_MS || 5000);
 const MAX_CONCURRENT = +(process.env.MAX_CONCURRENT || 1);
-const TASK_TIMEOUT_MS = +(process.env.TASK_TIMEOUT_MS || 1800000);
+const TASK_TIMEOUT_MS = +(process.env.TASK_TIMEOUT_MS || 9000000);
 
 // Resolve the brain list. Precedence:
 //   PRESET → BRAINS_FILE → BRAINS → BRAIN_ID → AUTO-DETECT (default).

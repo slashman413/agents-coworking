@@ -898,14 +898,14 @@ class App {
     }
   }
 
-  async pollChatTask(id, timeoutMs = 300000) {
+  async pollChatTask(id, timeoutMs = 1500000) {
     const start = Date.now();
     for (;;) {
       await new Promise(r => setTimeout(r, 2000));
       let t;
       try { t = await this.api.get(`/inbox/${encodeURIComponent(id)}`); } catch { t = null; }
       if (t && (t.status === 'done' || t.status === 'rejected')) return t;
-      if (Date.now() - start > timeoutMs) return { status: 'timed-out', result: '(no response within 5 min)', context: {} };
+      if (Date.now() - start > timeoutMs) return { status: 'timed-out', result: '(no response within 25 min)', context: {} };
     }
   }
 
