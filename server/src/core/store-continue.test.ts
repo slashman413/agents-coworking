@@ -81,6 +81,26 @@ test('continueTask works with no artifacts (result only) and does not double-pre
   assert.deepEqual(store.listInputs(next.id), ['previous-result.md']);
 });
 
+test('continueTask stamps the ORIGINAL with context.continuedInto (so the UI disables its Continue button)', async () => {
+  const { store } = makeStore();
+  const orig = store.createTask({ title: 'Ship it', from: { platform: 'p', agent: 'a' } } as any);
+  await store.completeTask({ taskId: orig.id, result: 'done', internal: true });
+
+  // Before: not yet continued.
+  assert.equal(store.getTask(orig.id)?.context?.continuedInto, undefined);
+
+  const next = store.continueTask(orig.id)!;
+
+  // After: the ORIGINAL points at the follow-up, durably persisted to disk.
+  const reloaded = store.getTask(orig.id)!;
+  assert.equal(reloaded.context?.continuedInto, next.id, 'original stamped with the new task id');
+  // The stamp survives a fresh read (it is on disk, not just in memory).
+  assert.equal(reloaded.status, 'done', 'stamping does not disturb the original status/result');
+  assert.equal(reloaded.result, 'done');
+  // The follow-up back-references the original (existing behavior, unchanged).
+  assert.equal(next.context?.continuedFrom, orig.id);
+});
+
 test('continueTask refuses a failed (chain-exhausted) task — that path is rerun, not continue', async () => {
   const { store } = makeStore();
   const bad = store.createTask({ title: 'nope', from: { platform: 'p', agent: 'a' } } as any);

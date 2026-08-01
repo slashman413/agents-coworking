@@ -533,6 +533,14 @@ export class Store {
 
     const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
+
+    // Durably stamp the ORIGINAL as continued (→ the new task's id) so the
+    // dashboard can disable its "Continue" button after a re-render. Without
+    // this the button returns enabled on every refresh and a user can spawn
+    // unlimited duplicate follow-ups from one done card.
+    prev.context = { ...(prev.context || {}), continuedInto: id };
+    this.saveTask(prev);
+
     this.eventBus.emitTaskCreated(task);
     return task;
   }

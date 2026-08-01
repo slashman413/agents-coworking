@@ -1026,8 +1026,11 @@ class App {
           <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
             ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" title="Re-run this task from the top of its brain chain"
               style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
-            ${t.status === 'done' && !failed ? `<button class="btn" data-continue-task="${esc(t.id)}" title="Continue this task — spawn a follow-up seeded with this run's output files and result, on the same brain"
-              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>` : ''}
+            ${t.status === 'done' && !failed ? (t.context?.continuedInto
+              ? `<button class="btn" disabled title="Already continued — a follow-up task was spawned from this run"
+              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E99;border-color:#22C55E33;opacity:.6;cursor:default">✓ Continued</button>`
+              : `<button class="btn" data-continue-task="${esc(t.id)}" title="Continue this task — spawn a follow-up seeded with this run's output files and result, on the same brain"
+              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>`) : ''}
             <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
               style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
         </div>
