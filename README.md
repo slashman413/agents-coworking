@@ -1,4 +1,7 @@
 # 🤝 Multi-Agent Cowork Framework
+> ## 🛍️ **Cowork Pro — the production package**
+> The MCP server above is the open-source core. **[Cowork Pro ($99.99)](https://slashmaster6.gumroad.com/l/xfhfps)** adds the full production stack: advanced workflows, priority support & lifetime updates. Also included in the **[AI Developer Stack Bundle ($199)](https://slashmaster6.gumroad.com/l/nulyms)**.
+
 
 A filesystem-based MCP server + Web UI dashboard that enables multi-platform AI
 agents to coordinate, dispatch tasks, and share reports — all through a single
