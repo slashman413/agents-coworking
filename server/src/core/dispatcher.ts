@@ -711,7 +711,13 @@ export class Dispatcher {
           ? ['hermes', '-m', roleCfg.model, '-z', prompt]
           : ['hermes', '-z', prompt];
       case 'agy':
-        return ['agy', '-p', prompt, '--dangerously-skip-permissions'];
+        // agy (Antigravity CLI) print mode defaults to --print-timeout 5m0s and
+        // self-aborts there — long before cowork's own taskTimeoutMs kill. That
+        // 5-min cap silently truncated multi-step "build + push" tasks mid-run,
+        // leaving planning narration with no deliverable (verifier then rejected
+        // it). Pin agy's print timeout to cowork's task budget so the dispatcher's
+        // SIGTERM at taskTimeoutMs stays the single authority.
+        return ['agy', '-p', prompt, '--print-timeout', `${this.config.orchestration.taskTimeoutMs}ms`, '--dangerously-skip-permissions'];
       case 'codex':
         // OpenAI Codex CLI, non-interactive. `--` ends option parsing so a prompt
         // that happens to start with a dash isn't mistaken for a flag.
