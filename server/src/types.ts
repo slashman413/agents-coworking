@@ -51,6 +51,27 @@ export interface BrainConfig {
   dynamic?: boolean;
   /** Agent id of the client that registered this brain (for explicit deregister). */
   registeredBy?: string;
+  /** WF-3: machine-detected environment facts, so the router can know what this
+   *  brain's host actually has and stop landing tasks where they cannot run.
+   *  Auto-detected by the client at registration (names only — never secret
+   *  values). A brain with no `env` is treated permissively (legacy behavior)
+   *  except against `path:`/`secret:` task requirements, which fail closed. */
+  env?: BrainEnv;
+}
+
+/** Environment capability manifest for a brain (WF-3 §B-I). All fields are
+ *  detected facts, not values: `secrets` holds credential NAMES only. */
+export interface BrainEnv {
+  /** Absolute paths present on the host (matched by prefix against `path:` requires). */
+  paths?: string[];
+  /** CLI tools available (`command -v` hits): git, gh, ffmpeg, python3, … */
+  tools?: string[];
+  /** Names (never values) of credentials the host holds — matched by `secret:` requires. */
+  secrets?: string[];
+  /** Reachable network hosts (optional, advisory). */
+  net?: string[];
+  /** Freeform host traits (e.g. "linux-x86_64", "no-gpu"). */
+  traits?: string[];
 }
 
 /**

@@ -6,6 +6,7 @@ import type { EventBus } from './events.js';
 import type { Store, CompletionDecision } from './store.js';
 import type { Workflows } from './workflows.js';
 import { verifyOutput, buildVerifierPrompt, parseLlmVerdict, detectInputRequest, type VerifyVerdict, type InputOptions, type InputRequest } from './result-verifier.js';
+import { buildLesson, appendLesson } from './lessons.js';
 
 /** Remove ANSI CSI/OSC escape sequences and lone carriage returns. */
 // eslint-disable-next-line no-control-regex
@@ -818,6 +819,47 @@ export class Dispatcher {
   }
 
   /**
+   * WF-1: append one lesson to the cross-task ledger (`decisions/lessons.jsonl`).
+   * Fired on verifier rejections and wait-input parkings — the two moments a task
+   * teaches the network something. Best-effort and NEVER-THROW: capture failing
+   * (full disk, permissions) MUST NOT affect the task lifecycle, so the whole body
+   * is guarded and errors are swallowed after logging. Deterministic — no LLM.
+   */
+  private recordLesson(taskId: string, input: {
+    kind: 'verify-fail' | 'wait-input';
+    brain: string;
+    agent: string;
+    attempt: number;
+    reason?: string;
+    resultText?: string;
+    questions?: string[];
+  }): void {
+    try {
+      const t = this.store.getTask(taskId);
+      if (!t) return;
+      const lesson = buildLesson({
+        kind: input.kind,
+        task: taskId,
+        title: t.title || '',
+        agent: input.agent,
+        brain: input.brain,
+        attempt: input.attempt,
+        reason: input.reason,
+        resultText: input.resultText,
+        questions: input.questions
+      });
+      const ok = appendLesson(this.config.paths.decisions, lesson);
+      if (ok) {
+        const sig = lesson.requiresGuess.length ? lesson.requiresGuess.join(',') : lesson.titleSlug;
+        console.log(`[lessons] recorded ${lesson.kind} ${taskId.slice(0, 8)} ${sig}`);
+      }
+    } catch (e: any) {
+      // never let lesson capture break dispatch
+      console.error(`[lessons] recordLesson failed (ignored): ${e?.message || e}`);
+    }
+  }
+
+  /**
    * Completion guard for EXTERNALLY reported results — a remote brain's client
    * calls complete_task / PATCH inbox with its output. That output can itself be
    * a soft failure ("you've hit your session limit", a rate-limit / quota notice,
@@ -838,7 +880,14 @@ export class Dispatcher {
     // user is still parked so it isn't silently marked done.
     if (!brainId || !brains[brainId]) {
       const req = detectInputRequest(text, this.inputOpts());
-      return req.needsInput ? { action: 'wait-input', questions: req.questions } : { action: 'complete' };
+      if (req.needsInput) {
+        this.recordLesson(task.id, {
+          kind: 'wait-input', brain: brainId || '', agent: this.resolveAgent(task) || brainId || '',
+          attempt: (Number(task.context?.attempts) || 0) + 1, questions: req.questions, resultText: text
+        });
+        return { action: 'wait-input', questions: req.questions };
+      }
+      return { action: 'complete' };
     }
 
     // Strict gate precedence:
@@ -854,6 +903,11 @@ export class Dispatcher {
     if (verdict.ok) {
       const req = detectInputRequest(text, this.inputOpts());
       if (req.needsInput) {
+        this.recordLesson(task.id, {
+          kind: 'wait-input', brain: brainId,
+          agent: this.resolveAgent(task) || (typeof task.context?.agentName === 'string' ? task.context.agentName : '') || brainId,
+          attempt: (Number(task.context?.attempts) || 0) + 1, questions: req.questions, resultText: text
+        });
         console.log(`Dispatcher: reported result for task ${task.id} on ${brainId} is a QUESTION → wait-input (${req.matched || 'phrase'})`);
         return { action: 'wait-input', questions: req.questions };
       }
@@ -867,6 +921,7 @@ export class Dispatcher {
       || (typeof task.context?.agentName === 'string' ? task.context.agentName : '') || brainId;
     const division = typeof task.context?.division === 'string' ? task.context.division : undefined;
     this.recordFailedBrain(task.id, { brain: brainId, agent, attempt: attempt + 1, reason: failReason });
+    this.recordLesson(task.id, { kind: 'verify-fail', brain: brainId, agent, attempt: attempt + 1, reason: failReason, resultText: text });
     console.log(`Dispatcher: verifier REJECTED reported result for task ${task.id} on ${brainId} — ${failReason.slice(0, 80)}`);
 
     // A user-pinned brain (context.brain WITHOUT brainAuto) retries itself up to
@@ -1023,6 +1078,7 @@ export class Dispatcher {
     if (!verdict.ok) {
       const failReason = verdict.reason || output.text.slice(0, 300);
       this.recordFailedBrain(task.id, { brain: plan.brainId, agent: plan.agent, attempt: plan.attempt + 1, reason: failReason });
+      this.recordLesson(task.id, { kind: 'verify-fail', brain: plan.brainId, agent: plan.agent, attempt: plan.attempt + 1, reason: failReason, resultText: output.text });
       const fresh = this.store.getTask(task.id);
       if (fresh) {
         const nextAttempt = plan.attempt + 1;
@@ -1061,6 +1117,7 @@ export class Dispatcher {
           if (artifacts.length) (t as any).artifacts = artifacts;
           this.store.saveTask(t);
         }
+        this.recordLesson(task.id, { kind: 'wait-input', brain: plan.brainId, agent: plan.agent, attempt: plan.attempt + 1, questions: req.questions, resultText: output.text });
         this.store.parkForInput({ taskId: task.id, questions: req.questions, result: output.text.slice(0, 4000) });
         console.log(`Dispatcher: task ${task.id} paused on wait-input — agent asked ${req.questions.length} question(s) (${req.matched || 'phrase'})`);
         return;

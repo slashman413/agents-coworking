@@ -28,6 +28,9 @@ const SERVER_INSTRUCTIONS = [
   '  })',
   '',
   'exec is one of: claude | hermes | agy | codex | ollama (model = an Ollama chat model) | script.',
+  'Each brain may also carry an optional `env` manifest — {paths, tools, secrets, net, traits}',
+  'of machine-detected FACTS (names only, never secret values) — so the router can avoid sending a',
+  'task to a host that lacks the paths/tools/credentials it needs. The ready-made client auto-detects it.',
   '',
   'Then poll list_inbox(status:"pending"), claim_task(task_id, agent_id) any task whose',
   'context.brain is one of your ids, run it locally, and complete_task(...). Call',
@@ -35,6 +38,19 @@ const SERVER_INSTRUCTIONS = [
   'auto-removed on disconnect). A ready-made client + presets live in the repo:',
   'deploy/remote-brain-client.mjs and JOIN-AS-A-BRAIN.md.'
 ].join('\n');
+
+/** Cap a client-declared env manifest to sane bounds before it is persisted:
+ *  ≤200 entries per list, each ≤300 chars. A hostile or buggy client cannot
+ *  bloat the registry. Returns a plain object with only the known list fields. */
+function capEnv(env: Record<string, unknown>): import('../types.js').BrainEnv {
+  const cap = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, 200).map(s => s.slice(0, 300)) : [];
+  const out: import('../types.js').BrainEnv = {};
+  for (const k of ['paths', 'tools', 'secrets', 'net', 'traits'] as const) {
+    if (Array.isArray((env as any)[k])) out[k] = cap((env as any)[k]);
+  }
+  return out;
+}
 
 function buildServer(config: Config, store: Store, eventBus: EventBus): McpServer {
   const server = new McpServer({
@@ -65,7 +81,17 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
         exec: z.enum(['claude', 'hermes', 'agy', 'script', 'codex', 'ollama']).optional(),
         model: z.string().optional(),
         host: z.string().optional(),
-        description: z.string().optional()
+        description: z.string().optional(),
+        // WF-3 (RC-1): env capability manifest. The schema is closed, so this key
+        // must be declared here AND forwarded below — otherwise it is silently
+        // stripped and the feature no-ops with no error.
+        env: z.object({
+          paths: z.array(z.string()).optional(),
+          tools: z.array(z.string()).optional(),
+          secrets: z.array(z.string()).optional(),
+          net: z.array(z.string()).optional(),
+          traits: z.array(z.string()).optional()
+        }).partial().optional()
       })).optional()
     },
     async (args) => {
@@ -86,6 +112,8 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
             ...(b.exec ? { exec: b.exec } : {}),
             ...(b.model !== undefined ? { model: b.model } : {}),
             ...(b.host ? { host: b.host } : {}),
+            // WF-3: forward the (capped) env manifest so the router can use it.
+            ...(b.env ? { env: capEnv(b.env) } : {}),
             dynamic: true,
             registeredBy: agent.id
           });

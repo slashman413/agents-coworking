@@ -67,6 +67,37 @@ function loadJsonWithHost(raw) { return JSON.parse(raw.split('{HOST}').join(HOST
 function preset(name) { return loadJsonWithHost(readFileSync(join(PRESET_DIR, `${name}.json`), 'utf8')); }
 function hasCli(cli) { return spawnSync('sh', ['-c', `command -v ${cli}`], { stdio: 'ignore' }).status === 0; }
 
+// WF-3: auto-detect this host's environment CAPABILITIES so the router can avoid
+// landing tasks where they can't run. Facts only, never values — `secrets` holds
+// credential file NAMES under ~/.priv/, not their contents. Fast (each probe is a
+// cheap sync spawn/stat) and fail-soft: any probe that errors is simply skipped, so
+// a partial manifest still ships. Override/extend via ENV_TOOLS / ENV_PATHS.
+function detectEnv() {
+  const tools = [], paths = [], secrets = [], traits = [];
+  const TOOL_LIST = ['git', 'gh', 'node', 'python3', 'ffmpeg', 'xurl', 'docker', 'rsync', 'sops', 'age', 'jq',
+    ...(process.env.ENV_TOOLS ? process.env.ENV_TOOLS.split(',').map(s => s.trim()).filter(Boolean) : [])];
+  for (const t of TOOL_LIST) { try { if (hasCli(t) && !tools.includes(t)) tools.push(t); } catch { /* skip */ } }
+
+  const PATH_LIST = (process.env.ENV_PATHS || `${os.homedir()}/workspace:${os.homedir()}/.priv`)
+    .split(':').map(s => s.trim()).filter(Boolean);
+  for (const p of PATH_LIST) {
+    try { if (statSync(p).isDirectory()) paths.push(p); } catch { /* absent → skip */ }
+  }
+
+  // Credential NAMES only (never contents): the file basenames under ~/.priv/.
+  try {
+    for (const f of readdirSync(join(os.homedir(), '.priv'))) {
+      const name = f.replace(/\.(json|txt|env|key|pem|age)$/i, '');
+      if (name && !secrets.includes(name)) secrets.push(name);
+    }
+  } catch { /* no ~/.priv → no secrets declared */ }
+
+  traits.push(`${os.platform()}-${os.arch()}`);
+  return { paths, tools, secrets, traits };
+}
+const ENV_FACTS = detectEnv();
+console.log(`[env] detected ${ENV_FACTS.tools.length} tool(s), ${ENV_FACTS.paths.length} path(s), ${ENV_FACTS.secrets.length} secret-name(s)`);
+
 let BRAINS;
 if (process.env.PRESET) {
   BRAINS = preset(process.env.PRESET);
@@ -278,7 +309,7 @@ async function main() {
   await connect();
   const me = await tool('register_agent', {
     platform: PLATFORM, agent_name: AGENT_NAME, capabilities: [...MY_IDS],
-    brains: Object.values(BRAIN).map(b => ({ id: b.id, location: b.location, exec: b.exec, model: b.model, host: b.host }))
+    brains: Object.values(BRAIN).map(b => ({ id: b.id, location: b.location, exec: b.exec, model: b.model, host: b.host, env: ENV_FACTS }))
   });
   const agentId = me.id;
   console.log(`[${AGENT_NAME}] registered as ${agentId} → ${URL_BASE}; serving brains: ${[...MY_IDS].join(', ')} (concurrency ${MAX_CONCURRENT})`);
