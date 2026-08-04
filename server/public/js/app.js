@@ -283,6 +283,36 @@ class App {
   }
 
   /**
+   * Copy text to the clipboard, returning true on success. The async Clipboard
+   * API (navigator.clipboard) only exists in secure contexts — HTTPS or
+   * http://localhost — so on a plain-HTTP LAN dashboard it is undefined and
+   * throws. Fall back to a hidden-textarea + execCommand('copy'), which works
+   * over plain HTTP as long as the call is inside a user gesture (it is — this
+   * runs from a click handler).
+   */
+  async copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; }
+      catch { /* fall through to legacy path */ }
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      // Keep it off-screen but still focusable/selectable.
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);   // iOS needs an explicit range
+      const ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch { return false; }
+  }
+
+  /**
    * Confirm a continue/re-run AND let the user choose which brain claims the
    * task. Renders the shared #modal-container with a brain <select> (populated
    * from /api/brains, "Auto" = route via the agent's chain). Resolves to
@@ -1270,8 +1300,8 @@ class App {
       el.addEventListener('click', async (e) => {
         e.stopPropagation();   // don't toggle the card
         const text = el.dataset.copy;
-        try { await navigator.clipboard.writeText(text); this.toast('copied', text); }
-        catch { this.toast('copy failed', text); }
+        if (await this.copyText(text)) this.toast('copied', text);
+        else this.toast('copy failed', text);
       }));
 
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
