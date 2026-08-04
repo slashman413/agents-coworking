@@ -140,6 +140,7 @@ class App {
     this.inboxFilter = '';
     this.inboxSearch = '';     // Task Inbox title search (client-side, on top of the status filter)
     this.inboxLimit = 50;
+    this.openTasks = new Set();  // ids of expanded task cards — survives SSE-driven re-renders
     this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
@@ -233,17 +234,23 @@ class App {
     this.activity.unshift(data);
     this.activity = this.activity.slice(0, 30);
     if (data.type !== 'heartbeat') {
-      this.toast(data.type, this.describeEvent(data));
+      // Only toast events the operator actually acts on; claim/handover chatter
+      // still lands in the Live Activity feed without stealing attention.
+      if (['taskCreated', 'taskCompleted', 'reportFiled', 'agentRegistered'].includes(data.type)) {
+        this.toast(data.type, this.describeEvent(data));
+      }
       // A full re-render replaces the view's DOM, which would wipe whatever the
       // user is mid-way through typing (chat message, search box) along with the
       // caret. Never auto-re-render Chat — it drives its own updates via
-      // renderChatMessages, which only touches the transcript, not the composer —
-      // and skip the re-render on any view while an input/textarea has focus.
-      // The toast still fires, and the view refreshes on the next event once the
-      // field is no longer focused.
-      const el = document.activeElement;
-      const typing = !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
-      if (this.currentView !== 'chat' && !typing) this.renderCurrentView();
+      // renderChatMessages, which only touches the transcript, not the composer.
+      // Debounce so a burst of events causes one refresh, and re-check the
+      // typing guard when the timer fires (not when the event arrived).
+      clearTimeout(this._rerenderTimer);
+      this._rerenderTimer = setTimeout(() => {
+        const el = document.activeElement;
+        const typing = !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.isContentEditable);
+        if (this.currentView !== 'chat' && !typing) this.renderCurrentView();
+      }, 800);
     }
   }
 
@@ -275,7 +282,7 @@ class App {
       case 'taskCompleted': return `done: ${p.task?.title}`;
       case 'reportFiled': return p.report?.title;
       case 'heartbeat': return `${this.agentLabel(p.agentId)} → ${p.status}`;
-      default: return JSON.stringify(p).slice(0, 80);
+      default: return p.task?.title || p.agent?.agentName || humanizeKey(e.type);
     }
   }
 
@@ -361,6 +368,75 @@ class App {
     });
   }
 
+  /**
+   * "＋ New task" modal — create and dispatch a task from the Inbox without the
+   * Chat detour. Same POST /inbox contract as Chat; brain pinning mirrors
+   * pickBrain ('' = auto-route via the agent's brain chain).
+   */
+  async createTaskModal() {
+    const container = document.getElementById('modal-container');
+    const content = document.getElementById('modal-content');
+    if (!container || !content) return;
+    let brains = {};
+    try { brains = await this.api.get('/brains'); } catch { /* registry unreachable → Auto only */ }
+    const opts = [`<option value="">🧠 Auto — route via the agent's brain chain</option>`]
+      .concat(Object.keys(brains).sort().map(b => `<option value="${esc(b)}">${esc(b)}</option>`)).join('');
+    const fieldStyle = 'width:100%; padding:9px 10px; background:var(--bg-tertiary); border:1px solid var(--border-color); border-radius:8px; color:inherit; font:inherit; font-size:0.9rem';
+    const labelStyle = 'display:block; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); margin:0 0 6px';
+    content.innerHTML = `
+      <h3 style="margin:0 0 8px; font-size:1.05rem">New task</h3>
+      <p style="font-size:0.85rem; color:var(--text-secondary); margin:0 0 16px; line-height:1.5">The task is queued as pending and dispatched by the next tick.</p>
+      <label style="${labelStyle}">Title</label>
+      <input id="nt-title" style="${fieldStyle}; margin-bottom:12px" placeholder="Short imperative title…">
+      <label style="${labelStyle}">Brief (markdown)</label>
+      <textarea id="nt-desc" rows="6" style="${fieldStyle}; margin-bottom:12px; resize:vertical" placeholder="What should the agent do? Include acceptance criteria."></textarea>
+      <label style="${labelStyle}">Priority</label>
+      <select id="nt-priority" style="${fieldStyle}; margin-bottom:12px">
+        <option value="normal" selected>normal</option><option value="low">low</option>
+        <option value="high">high</option><option value="urgent">urgent</option>
+      </select>
+      <label style="${labelStyle}">Brain to claim this task</label>
+      <select id="nt-brain" style="${fieldStyle}; margin-bottom:20px">${opts}</select>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn" id="nt-cancel" style="font-size:0.85rem">Cancel</button>
+        <button class="btn" id="nt-ok" style="font-size:0.85rem; color:#22C55E; border-color:#22C55E66">＋ Create task</button>
+      </div>`;
+    container.classList.remove('hidden');
+    content.querySelector('#nt-title').focus();
+    const close = () => {
+      container.classList.add('hidden');
+      content.innerHTML = '';
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    content.querySelector('#nt-cancel').onclick = close;
+    container.querySelector('.modal-backdrop').onclick = close;
+    content.querySelector('#nt-ok').onclick = async () => {
+      const title = content.querySelector('#nt-title').value.trim();
+      const description = content.querySelector('#nt-desc').value.trim();
+      if (!title) { content.querySelector('#nt-title').style.borderColor = '#EF4444'; return; }
+      if (!description) { content.querySelector('#nt-desc').style.borderColor = '#EF4444'; return; }
+      const brain = content.querySelector('#nt-brain').value;
+      const body = {
+        title, description,
+        from: { platform: 'dashboard', agent: 'operator' },
+        priority: content.querySelector('#nt-priority').value,
+        context: brain ? { brain } : {}
+      };
+      content.querySelector('#nt-ok').disabled = true;
+      try {
+        await this.api.post('/inbox', body);
+        close();
+        this.toast('task created', brain ? `Queued — pinned to ${brain}.` : 'Queued — auto-routed via the brain chain.');
+        if (this.currentView === 'inbox') this.renderInbox();
+      } catch (err) {
+        content.querySelector('#nt-ok').disabled = false;
+        this.toast('error', err.message);
+      }
+    };
+  }
+
   navigate() {
     const hash = window.location.hash.replace('#', '') || 'dashboard';
     this.currentView = hash;
@@ -407,7 +483,9 @@ class App {
       // Live even if the SSE stream is slow/blocked for any reason.
       this.updateConnectionStatus('connected');
     } catch (error) {
-      this.contentEl.innerHTML = `<div class="empty-state"><p>Error loading view: ${esc(error.message)}</p></div>`;
+      this.contentEl.innerHTML = `<div class="empty-state"><p>Error loading view: ${esc(error.message)}</p>
+        <button class="btn" id="view-retry" style="margin-top:10px">↻ Retry</button></div>`;
+      this.contentEl.querySelector('#view-retry')?.addEventListener('click', () => this.renderCurrentView());
     }
     createIcons();
   }
@@ -1050,16 +1128,29 @@ class App {
     const filter = this.inboxFilter;
     const fetchLimit = this.inboxLimit + 1;
     const q = filter ? `?status=${filter}&limit=${fetchLimit}` : `?limit=${fetchLimit}`;
-    let [tasks] = await Promise.all([this.api.get(`/inbox${q}`), this.refreshAgents()]);
-    
+    let [tasks, status] = await Promise.all([
+      this.api.get(`/inbox${q}`),
+      this.api.get('/status').catch(() => null),
+      this.refreshAgents()
+    ]);
+
     let hasMore = false;
     if (tasks.length > this.inboxLimit) {
       hasMore = true;
       tasks = tasks.slice(0, this.inboxLimit);
     }
 
+    // Per-status counts on the filter pills (from the dashboard summary; the
+    // "done" pill excludes failed tasks, mirroring the server's done filter).
+    const s = status?.inboxSummary;
+    const counts = s ? {
+      done: Math.max(0, (s.completed || 0) - (s.failed || 0)),
+      'in-progress': s.inProgress || 0, pending: s.pending || 0,
+      'wait-input': s.waitingInput || 0, failed: s.failed || 0
+    } : null;
     const pills = ['', 'done', 'in-progress', 'pending', 'wait-input', 'failed'].map(f => {
-      const label = f === '' ? 'All' : f;
+      const n = counts && f ? counts[f] : null;
+      const label = (f === '' ? 'All' : f) + (n !== null && n !== undefined ? ` ${n}` : '');
       const active = this.inboxFilter === f;
       const color = f === 'failed' ? '#EF4444' : (STATUS_COLORS[f] || '#94A3B8');
       let style = '';
@@ -1116,10 +1207,13 @@ class App {
           ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
           ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
           ${inputs.length ? badge(`📎 ${inputs.length}`, '#0EA5E9') : ''}
+          ${t.priority && t.priority !== 'normal' ? badge(t.priority, t.priority === 'urgent' ? '#EF4444' : (t.priority === 'high' ? '#EAB308' : '#94A3B8')) : ''}
+          ${(Array.isArray(t.tags) ? t.tags : []).filter(tag => tag !== 'chat').map(tag => badge('#' + tag, '#64748B')).join('')}
+          <span class="task-caret" style="margin-left:auto; color:var(--text-muted); font-size:0.72rem; user-select:none">${this.openTasks.has(t.id) ? '▾' : '▸'}</span>
         </div>
         <div style="margin:7px 0 3px"><strong style="font-size:1.02rem">${esc(t.title)}</strong></div>
         ${chainHtml}
-        <div class="task-meta" style="display:block; margin:2px 0 4px">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
+        <div class="task-meta" style="display:block; margin:2px 0 4px">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · <span title="${esc(t.createdAt || '')}">${timeAgo(t.createdAt)}</span>
           ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" data-brain="${esc(c.brainAuto ? '' : (c.brain || ''))}" title="Re-run this task — pick which brain claims it"
             style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
           ${t.status === 'done' && !failed ? (t.context?.continuedInto
@@ -1143,18 +1237,22 @@ class App {
           ${inputs.map(f => `<a href="/api/inputs/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="paperclip" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}
           ${canAttach ? `<input type="file" data-attach-files="${esc(t.id)}" multiple style="display:none">
           <button class="btn" data-attach-input="${esc(t.id)}" title="Attach files for the brain to read" style="font-size:0.75rem;margin:0">＋ Attach files</button>` : ''}</div>` : ''}
-        <div class="task-detail">
+        <div class="task-detail"${this.openTasks.has(t.id) ? ' style="display:block"' : ''}>
           ${mdViewer(t.description, 'DESCRIPTION', { big: true })}
           ${this.interactionBlock(t)}
           ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT', { big: true })}</div>` : ''}
-          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(this.agentLabel(t.claimedBy))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
+          ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(this.agentLabel(t.claimedBy))}${t.completedAt ? ` · completed <span title="${esc(t.completedAt)}">${timeAgo(t.completedAt)}</span>` : ''}</p>` : ''}
         </div>
       </div>`;
     }).join('') : `<div class="empty-state"><p>No tasks${this.inboxFilter ? ` with status "${esc(this.inboxFilter)}"` : ''}.</p></div>`;
 
+    // #content is the scroll container — preserve the reading position across
+    // SSE-driven re-renders instead of snapping back to the top.
+    const scrollY = this.contentEl.scrollTop;
     this.contentEl.innerHTML = `
       <div style="display:flex; gap:8px; margin-bottom:10px; align-items:center; flex-wrap:wrap">${pills}
         <span style="margin-left:auto; display:flex; gap:6px; align-items:center">
+          <button class="btn" id="new-task-btn" title="Create and dispatch a new task" style="font-size:0.78rem; color:#22C55E; border-color:#22C55E66">＋ New task</button>
           <span style="font-size:0.75rem;color:var(--text-muted)">purge done &gt;</span>
           <input id="purge-days" type="number" min="0" value="30" style="width:58px;padding:4px 6px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.78rem">
           <span style="font-size:0.75rem;color:var(--text-muted)">days</span>
@@ -1166,6 +1264,7 @@ class App {
       <div id="inbox-nomatch" style="display:none; color:var(--text-muted); font-size:0.85rem; padding:8px 0">No task titles match your search.</div>
       ${rows}
       ${hasMore ? `<div id="inbox-load-more" style="text-align:center; margin-top:20px; margin-bottom:20px; color:var(--text-muted); font-size:0.85rem;">Loading more tasks...</div>` : ''}`;
+    this.contentEl.scrollTop = scrollY;
 
     this.contentEl.querySelectorAll('[data-filter]').forEach(b =>
       b.addEventListener('click', () => { this.inboxLimit = 50; this.inboxFilter = b.dataset.filter; this.renderInbox(); }));
@@ -1296,6 +1395,9 @@ class App {
         } catch (err) { this.toast('error', err.message); btn.disabled = false; }
       }));
 
+    // Create + dispatch a new task straight from the Inbox (no Chat detour).
+    this.contentEl.querySelector('#new-task-btn')?.addEventListener('click', () => this.createTaskModal());
+
     // Purge: always preview with a dry run, then ask before deleting.
     this.contentEl.querySelector('#purge-btn')?.addEventListener('click', async () => {
       const days = Number(this.contentEl.querySelector('#purge-days').value || 30);
@@ -1324,7 +1426,12 @@ class App {
       card.addEventListener('click', (e) => {
         if (e.target.closest('pre, .md-block, a, button, input, textarea, select, label, .task-interaction, .copyable')) return;   // don't toggle when interacting with content
         const d = card.querySelector('.task-detail');
-        d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
+        const open = !(d.style.display === 'block');
+        d.style.display = open ? 'block' : 'none';
+        // Remember which cards are open so SSE-driven re-renders don't collapse them.
+        if (open) this.openTasks.add(card.dataset.task); else this.openTasks.delete(card.dataset.task);
+        const caret = card.querySelector('.task-caret');
+        if (caret) caret.textContent = open ? '▾' : '▸';
         createIcons();
       }));
 
