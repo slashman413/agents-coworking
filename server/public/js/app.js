@@ -53,14 +53,19 @@ function md(text) {
 }
 // A markdown block with a Raw/Rendered toggle (delegated click handler below).
 let _mdSeq = 0;
-function mdViewer(text, label) {
+function mdViewer(text, label, opts = {}) {
   const id = `md${++_mdSeq}`;
+  // `big` bumps every size by ~2px for the cramped DESCRIPTION / RESULT blocks.
+  const big = !!opts.big;
+  const labelSize = big ? '0.845rem' : '0.72rem';
+  const bodySize  = big ? '1rem'     : '0.87rem';
+  const rawSize   = big ? '0.955rem' : '0.83rem';
   return `<div class="md-block" data-md="${id}">
-    ${label ? `<div style="font-size:0.72rem;color:var(--text-muted);display:flex;justify-content:space-between;align-items:center">
+    ${label ? `<div style="font-size:${labelSize};color:var(--text-muted);display:flex;justify-content:space-between;align-items:center">
       <span>${esc(label)}</span>
       <button class="btn md-toggle" data-md-target="${id}" style="font-size:0.68rem;padding:2px 6px">Raw</button></div>` : ''}
-    <div class="md-body" data-md-body="${id}" style="font-size:0.87rem; line-height:1.5">${md(text)}</div>
-    <pre class="md-raw" data-md-raw="${id}" hidden style="white-space:pre-wrap; font-size:0.83rem; background:var(--bg-tertiary); padding:10px; border-radius:8px; margin:4px 0">${esc(text)}</pre>
+    <div class="md-body" data-md-body="${id}" style="font-size:${bodySize}; line-height:1.5">${md(text)}</div>
+    <pre class="md-raw" data-md-raw="${id}" hidden style="white-space:pre-wrap; font-size:${rawSize}; background:var(--bg-tertiary); padding:10px; border-radius:8px; margin:4px 0">${esc(text)}</pre>
   </div>`;
 }
 
@@ -1084,30 +1089,46 @@ class App {
       // Files can be attached while a task is still schedulable, or to a failed one
       // (attach context, then re-run).
       const canAttach = ['pending', 'wait-input'].includes(t.status) || failed;
+      // Vertical brain fallback chain — brains in the order they were tried, the
+      // last one at the bottom. Failed rungs are red with their reason; the final
+      // (running / successful) brain sits at the end.
+      const chain = failedBrains.map(f => ({
+        brain: f.brain, reason: f.reason || 'failed', ok: false
+      }));
+      const lastFailed = failedBrains.length ? failedBrains[failedBrains.length - 1].brain : null;
+      if (brainLabel && brainLabel !== lastFailed) chain.push({ brain: brainLabel, ok: !failed, final: true });
+      const chainHtml = chain.length ? `<div class="task-brain-chain" style="display:flex; flex-direction:column; gap:3px; padding:2px 0 6px">
+        ${chain.map((r, i) => {
+          const col = r.ok ? '#22C55E' : (r.final ? BRAIN_COLOR : '#EF4444');
+          const icon = r.ok ? '✓' : (r.final ? '●' : '✗');
+          return `<div style="display:flex; align-items:center; gap:6px; font-size:0.8rem">
+            <span style="width:14px; text-align:right; color:var(--text-muted); font-size:0.7rem">${i + 1}</span>
+            <span class="badge" style="background:${col}18; color:${col}; border:1px solid ${col}40">${icon} ${esc(r.brain)}</span>
+            ${r.reason ? `<span style="color:var(--text-muted); font-size:0.74rem">${esc(r.reason)}</span>` : ''}
+          </div>`;
+        }).join('')}
+      </div>` : '';
       return `
       <div class="card task-card" style="margin-bottom: var(--space-md)${failed ? ';border-left:3px solid #EF4444' : ''}" data-task="${esc(t.id)}" data-title="${esc((t.title || '').toLowerCase())}">
-        <div class="task-card-header">
-          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-            ${failed ? badge('failed', '#EF4444') : badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
-            ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
-            ${brainLabel ? badge(brainLabel, BRAIN_COLOR) : ''}
-            ${failedBrains.map(f => badge(`✗ ${f.brain}`, '#EF4444')).join('')}
-            ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
-            ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
-            ${inputs.length ? badge(`📎 ${inputs.length}`, '#0EA5E9') : ''}
-            <strong style="margin-left:4px; font-size:0.9rem">${esc(t.title)}</strong>
-          </div>
-          <span class="task-meta">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
-            ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" data-brain="${esc(c.brainAuto ? '' : (c.brain || ''))}" title="Re-run this task — pick which brain claims it"
-              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
-            ${t.status === 'done' && !failed ? (t.context?.continuedInto
-              ? `<button class="btn" disabled title="Already continued — a follow-up task was spawned from this run"
-              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E99;border-color:#22C55E33;opacity:.6;cursor:default">✓ Continued</button>`
-              : `<button class="btn" data-continue-task="${esc(t.id)}" data-brain="${esc(brainLabel)}" title="Continue this task — spawn a follow-up seeded with this run's outputs; pick which brain claims it"
-              style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>`) : ''}
-            <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
-              style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+          ${failed ? badge('failed', '#EF4444') : badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
+          ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
+          ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
+          ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
+          ${inputs.length ? badge(`📎 ${inputs.length}`, '#0EA5E9') : ''}
         </div>
+        <div style="margin:7px 0 3px"><strong style="font-size:1.02rem">${esc(t.title)}</strong></div>
+        ${chainHtml}
+        <div class="task-meta" style="display:block; margin:2px 0 4px">${esc(t.from?.platform || '?')}/${esc(t.from?.agent || '?')} · ${timeAgo(t.createdAt)}
+          ${failed ? `<button class="btn" data-rerun-task="${esc(t.id)}" data-brain="${esc(c.brainAuto ? '' : (c.brain || ''))}" title="Re-run this task — pick which brain claims it"
+            style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#EF4444;border-color:#EF444466">↻ Re-run</button>` : ''}
+          ${t.status === 'done' && !failed ? (t.context?.continuedInto
+            ? `<button class="btn" disabled title="Already continued — a follow-up task was spawned from this run"
+            style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E99;border-color:#22C55E33;opacity:.6;cursor:default">✓ Continued</button>`
+            : `<button class="btn" data-continue-task="${esc(t.id)}" data-brain="${esc(brainLabel)}" title="Continue this task — spawn a follow-up seeded with this run's outputs; pick which brain claims it"
+            style="font-size:0.72rem;margin-left:8px;padding:2px 7px;color:#22C55E;border-color:#22C55E66">▸ Continue</button>`) : ''}
+          <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
+            style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></div>
         <div class="task-ids" style="display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:4px 0 2px; font-size:0.72rem; color:var(--text-muted)">
           <span class="copyable" data-copy="${esc(t.id)}" title="Task ID — click to copy" style="cursor:pointer; font-family:ui-monospace,SFMono-Regular,Menlo,monospace">
             <i data-lucide="hash" style="width:11px;height:11px;vertical-align:-1px"></i>${esc(t.id)}</span>
@@ -1115,22 +1136,17 @@ class App {
             <i data-lucide="folder" style="width:11px;height:11px;vertical-align:-1px"></i>artifacts/${esc(t.id)}/</span>
         </div>
         ${arts.length ? `<div class="task-artifacts" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
-          <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Artifacts</span>
-          ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
+          <span style="font-size:0.85rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Artifacts</span>
+          ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.9rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
         ${(inputs.length || canAttach) ? `<div class="task-inputs" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
           <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Inputs</span>
           ${inputs.map(f => `<a href="/api/inputs/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="paperclip" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}
           ${canAttach ? `<input type="file" data-attach-files="${esc(t.id)}" multiple style="display:none">
           <button class="btn" data-attach-input="${esc(t.id)}" title="Attach files for the brain to read" style="font-size:0.75rem;margin:0">＋ Attach files</button>` : ''}</div>` : ''}
         <div class="task-detail">
-          ${mdViewer(t.description, 'DESCRIPTION')}
+          ${mdViewer(t.description, 'DESCRIPTION', { big: true })}
           ${this.interactionBlock(t)}
-          ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT')}</div>` : ''}
-          ${failedBrains.length ? `<div style="margin-top:10px; font-size:0.78rem; color:var(--text-muted)">
-            <span style="text-transform:uppercase; letter-spacing:.03em; color:#EF4444">Failed brains</span>
-            <ul style="margin:4px 0 0; padding-left:18px">${failedBrains.map(f =>
-              `<li>attempt ${esc(String(f.attempt))} · <strong>${esc(f.brain)}</strong> — ${esc(f.reason || 'failed')}</li>`).join('')}</ul>
-          </div>` : ''}
+          ${t.result ? `<div style="margin-top:12px">${mdViewer(t.result, 'RESULT', { big: true })}</div>` : ''}
           ${t.claimedBy ? `<p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px">Claimed by ${esc(this.agentLabel(t.claimedBy))}${t.completedAt ? ' · completed ' + timeAgo(t.completedAt) : ''}</p>` : ''}
         </div>
       </div>`;
@@ -1142,7 +1158,7 @@ class App {
           <span style="font-size:0.75rem;color:var(--text-muted)">purge done &gt;</span>
           <input id="purge-days" type="number" min="0" value="30" style="width:58px;padding:4px 6px;background:var(--bg-tertiary);border:1px solid var(--bg-tertiary);border-radius:8px;color:inherit;font-size:0.78rem">
           <span style="font-size:0.75rem;color:var(--text-muted)">days</span>
-          <button class="btn" id="purge-btn" title="Delete finished tasks older than N days — keeps anything with artifacts or a keep/important/pinned tag" style="font-size:0.75rem">Purge…</button>
+          <button class="btn" id="purge-btn" title="Delete finished tasks older than N days — including ones with artifacts. Only keep/important/pinned-tagged tasks are spared. You'll be asked to confirm." style="font-size:0.75rem">Purge…</button>
         </span>
       </div>
       <input id="inbox-search" type="search" placeholder="Search titles…" value="${esc(this.inboxSearch || '')}"
@@ -1288,7 +1304,7 @@ class App {
         if (!preview.purged.length) { this.toast('nothing to purge', `no finished tasks older than ${days} days (kept ${preview.keptCount})`); return; }
         const sample = preview.purged.slice(0, 8).map(p => `• ${p.title}`).join('\n');
         const more = preview.purged.length > 8 ? `\n…and ${preview.purged.length - 8} more` : '';
-        if (!confirm(`Purge ${preview.purged.length} finished task(s) older than ${days} days?\nKeeping ${preview.keptCount} (unfinished, recent, has artifacts, or tagged keep/important/pinned).\n\n${sample}${more}\n\nTheir reports and artifacts are deleted too. This cannot be undone.`)) return;
+        if (!confirm(`⚠ Purge ${preview.purged.length} finished task(s) older than ${days} days?\n\nEvery finished task past ${days} days is removed — INCLUDING ones that produced artifacts. Only ${preview.keptCount} kept (unfinished, recent, or tagged keep/important/pinned).\n\n${sample}${more}\n\nTheir reports and artifacts are permanently deleted. This cannot be undone.`)) return;
         const done = await this.api.post('/inbox/purge', { olderThanDays: days });
         this.toast('purged', `${done.purged.length} task(s), ${done.reportsDeleted} report(s) removed`);
         this.renderInbox();

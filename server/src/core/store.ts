@@ -599,13 +599,15 @@ export class Store {
   }
 
   /**
-   * Bulk-purge finished tasks that are no longer worth keeping. Deliberately
-   * conservative — a task is KEPT when any of these hold:
+   * Bulk-purge finished tasks that are no longer worth keeping. A task is KEPT
+   * when any of these hold:
    *   • not finished (pending/claimed/in-progress)
    *   • finished more recently than `olderThanDays`
-   *   • it produced artifacts (files someone may still want)
    *   • it is tagged `keep`/`important`/`pinned` (explicit "this is meaningful")
-   * Pass dryRun to preview exactly what would go.
+   * NOTE: having artifacts no longer protects a task — an old finished task is
+   * purged whether or not it produced files (its artifacts are deleted with it).
+   * The dashboard therefore warns before deleting. Pass dryRun to preview
+   * exactly what would go.
    */
   public purgeTasks(opts: { olderThanDays?: number; dryRun?: boolean } = {}): {
     purged: Array<{ id: string; title: string; completedAt?: string }>;
@@ -620,9 +622,9 @@ export class Store {
     for (const task of this.listTasks({})) {
       const finished = task.status === 'done' || task.status === 'rejected';
       const when = new Date(task.completedAt || task.createdAt).getTime();
-      const hasArtifacts = Array.isArray((task as any).artifacts) && (task as any).artifacts.length > 0;
       const tagged = (task.tags || []).some(t => keepTags.has(String(t).toLowerCase()));
-      if (!finished || when >= cutoff || hasArtifacts || tagged) { keptCount++; continue; }
+      // Artifacts no longer keep a task alive — old finished tasks go regardless.
+      if (!finished || when >= cutoff || tagged) { keptCount++; continue; }
 
       purged.push({ id: task.id, title: task.title, completedAt: task.completedAt });
       if (!opts.dryRun) this.deleteTask(task.id);
