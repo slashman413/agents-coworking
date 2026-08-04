@@ -1078,6 +1078,12 @@ class App {
             <button class="btn" data-del-task="${esc(t.id)}" title="Delete this task, its reports and artifacts"
               style="font-size:0.72rem;margin-left:6px;padding:2px 7px">✕</button></span>
         </div>
+        <div class="task-ids" style="display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:4px 0 2px; font-size:0.72rem; color:var(--text-muted)">
+          <span class="copyable" data-copy="${esc(t.id)}" title="Task ID — click to copy" style="cursor:pointer; font-family:ui-monospace,SFMono-Regular,Menlo,monospace">
+            <i data-lucide="hash" style="width:11px;height:11px;vertical-align:-1px"></i>${esc(t.id)}</span>
+          <span class="copyable" data-copy="artifacts/${esc(t.id)}/" title="Artifacts directory — click to copy" style="cursor:pointer; font-family:ui-monospace,SFMono-Regular,Menlo,monospace">
+            <i data-lucide="folder" style="width:11px;height:11px;vertical-align:-1px"></i>artifacts/${esc(t.id)}/</span>
+        </div>
         ${arts.length ? `<div class="task-artifacts" style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:6px 0 2px">
           <span style="font-size:0.72rem; color:var(--text-muted); margin-right:2px; text-transform:uppercase; letter-spacing:.03em">Artifacts</span>
           ${arts.map(f => `<a href="/api/artifacts/${encodeURIComponent(t.id)}/${encodeURIComponent(f)}" download class="btn" style="font-size:0.78rem;margin:0;display:inline-flex;align-items:center;gap:4px"><i data-lucide="download" style="width:12px;height:12px"></i>${esc(f)}</a>`).join('')}</div>` : ''}
@@ -1259,9 +1265,18 @@ class App {
       } catch (err) { this.toast('error', err.message); }
     });
 
+    // Click a task ID or artifacts path to copy it to the clipboard.
+    this.contentEl.querySelectorAll('[data-copy]').forEach(el =>
+      el.addEventListener('click', async (e) => {
+        e.stopPropagation();   // don't toggle the card
+        const text = el.dataset.copy;
+        try { await navigator.clipboard.writeText(text); this.toast('copied', text); }
+        catch { this.toast('copy failed', text); }
+      }));
+
     this.contentEl.querySelectorAll('[data-task]').forEach(card =>
       card.addEventListener('click', (e) => {
-        if (e.target.closest('pre, .md-block, a, button, input, textarea, select, label, .task-interaction')) return;   // don't toggle when interacting with content
+        if (e.target.closest('pre, .md-block, a, button, input, textarea, select, label, .task-interaction, .copyable')) return;   // don't toggle when interacting with content
         const d = card.querySelector('.task-detail');
         d.style.display = d.style.display === 'none' || !d.style.display ? 'block' : 'none';
         createIcons();
