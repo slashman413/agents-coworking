@@ -33,7 +33,7 @@
       "color": "#0EA5E9"
     }
   },
-  "_services_comment": "Powers the Portal launcher in the web UI. Each entry needs a url; label/description/icon (a lucide icon name)/category are optional and default from a built-in catalog. Known keys (mautic, filebrowser, firecrawl, twseMcp, vllm35b, grafana, portainer, n8n, …) get their metadata for free.",
+  "_services_comment": "Powers the Portal launcher in the web UI. Each entry needs a url; label/description/icon (a lucide icon name)/category are optional and default from a built-in catalog. Known keys (mautic, filebrowser, firecrawl, vllm35b, grafana, portainer, n8n, …) get their metadata for free.",
   "services": {
     "mautic": {
       "url": "http://localhost:8081",
@@ -61,10 +61,6 @@
     },
     "firecrawl": {
       "url": "http://localhost:3002",
-      "enabled": false
-    },
-    "twseMcp": {
-      "url": "http://localhost:8083/mcp",
       "enabled": false
     }
   },

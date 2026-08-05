@@ -772,8 +772,7 @@ curl -X POST http://localhost:6868/mcp \
   "services": {
     "vllm35b": { "url": "http://localhost:8000/v1", "enabled": false },
     "vllm27b": { "url": "http://localhost:8001/v1", "enabled": false },
-    "firecrawl": { "url": "http://localhost:3002", "enabled": false },
-    "twseMcp": { "url": "http://localhost:8082/mcp", "enabled": false }
+    "firecrawl": { "url": "http://localhost:3002", "enabled": false }
   },
   "inbox": {
     "autoArchiveDays": 30,

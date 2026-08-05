@@ -104,7 +104,6 @@ const PORTAL_CATALOG = {
   mautic:      { label: 'Mautic',      icon: 'megaphone',   category: 'Marketing', description: 'Open-source marketing automation — campaigns, email, contacts.' },
   filebrowser: { label: 'Filebrowser', icon: 'folder',      category: 'Files',     description: 'Web file manager — browse, upload and share host files.' },
   firecrawl:   { label: 'Firecrawl',   icon: 'flame',       category: 'APIs & MCP', description: 'Web scraping / crawling API for LLM pipelines.' },
-  twseMcp:     { label: 'TWSE MCP',    icon: 'line-chart',  category: 'APIs & MCP', description: 'Taiwan Stock Exchange data MCP endpoint.' },
   vllm35b:     { label: 'vLLM 35B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (35B).' },
   vllm27b:     { label: 'vLLM 27B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (27B).' },
   grafana:     { label: 'Grafana',     icon: 'gauge',       category: 'Ops',       description: 'Metrics dashboards and observability.' },
@@ -122,7 +121,7 @@ const PORTAL_DEFAULTS = {
 const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
 const PORTAL_ACCENT = '#2563EB';
 
-// Turn a service key like "twseMcp" into a readable "Twse Mcp" fallback label.
+// Turn a service key like "vllm35b" into a readable "Vllm35b" fallback label.
 function humanizeKey(key) {
   return String(key)
     .replace(/[_-]+/g, ' ')

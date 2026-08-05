@@ -256,7 +256,7 @@ get_roster(category="engineering", search="keyword", active_only=true)
 get_dashboard()
 ```
 
-Shows active agents, inbox stats, service health (vllm, firecrawl, twseMcp).
+Shows active agents, inbox stats, service health (vllm, firecrawl).
 
 ## Heartbeat Pattern
 
