@@ -770,6 +770,7 @@ curl -X POST http://localhost:6868/mcp \
     }
   },
   "services": {
+    "forgejo": { "url": "http://localhost:3001", "enabled": true },
     "vllm35b": { "url": "http://localhost:8000/v1", "enabled": false },
     "vllm27b": { "url": "http://localhost:8001/v1", "enabled": false },
     "firecrawl": { "url": "http://localhost:3002", "enabled": false }

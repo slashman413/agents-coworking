@@ -103,6 +103,7 @@ function chainChip(brain, i, total, known) {
 const PORTAL_CATALOG = {
   mautic:      { label: 'Mautic',      icon: 'megaphone',   category: 'Marketing', description: 'Open-source marketing automation — campaigns, email, contacts.' },
   filebrowser: { label: 'Filebrowser', icon: 'folder',      category: 'Files',     description: 'Web file manager — browse, upload and share host files.' },
+  forgejo:     { label: 'Forgejo',     icon: 'git-fork',    category: 'Dev',       description: 'Self-hosted Git server — repos, issues and pull requests.' },
   firecrawl:   { label: 'Firecrawl',   icon: 'flame',       category: 'APIs & MCP', description: 'Web scraping / crawling API for LLM pipelines.' },
   vllm35b:     { label: 'vLLM 35B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (35B).' },
   vllm27b:     { label: 'vLLM 27B',    icon: 'cpu',         category: 'APIs & MCP', description: 'Local vLLM OpenAI-compatible inference server (27B).' },
@@ -118,7 +119,7 @@ const PORTAL_DEFAULTS = {
   filebrowser: { url: 'http://localhost:8082' },
 };
 
-const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
+const PORTAL_CATEGORY_ORDER = ['Marketing', 'Files', 'Dev', 'Automation', 'Ops', 'APIs & MCP', 'Other'];
 const PORTAL_ACCENT = '#2563EB';
 
 // Turn a service key like "vllm35b" into a readable "Vllm35b" fallback label.
