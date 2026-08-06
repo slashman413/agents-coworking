@@ -3,7 +3,7 @@ import path from 'path';
 import matter from 'gray-matter';
 import { v4 as uuidv4 } from 'uuid';
 import { globSync } from 'glob';
-import type { Config, ActiveAgent, Task, DashboardData, AgentCard, InteractionField } from '../types.js';
+import type { Config, ActiveAgent, Task, DashboardData, AgentCard, InteractionField, BrainUsage } from '../types.js';
 import type { EventBus } from './events.js';
 import { Roster } from './roster.js';
 
@@ -142,6 +142,18 @@ export class Store {
   public getCounters(): { ran: Record<string, Record<string, number>>; submitted: Record<string, Record<string, number>> } {
     const toObj = (m: Map<string, Map<string, number>>) => Object.fromEntries([...m].map(([k, v]) => [k, Object.fromEntries(v)]));
     return { ran: toObj(this.counters.ran), submitted: toObj(this.counters.submitted) };
+  }
+
+  // ── Per-brain rate-limit usage snapshots (in-memory, non-persistent; refilled
+  //    by the local UsagePoller and by remote clients' heartbeats within one
+  //    cycle after a restart). Only METERED brains (claude/codex/…) ever get an
+  //    entry — hermes/ollama/script brains have no quota and stay absent. ──────
+  private brainUsage = new Map<string, BrainUsage>();
+  public setBrainUsage(brainId: string, usage: BrainUsage): void {
+    this.brainUsage.set(brainId, usage);
+  }
+  public getBrainUsage(): Record<string, BrainUsage> {
+    return Object.fromEntries(this.brainUsage);
   }
 
   public removeAgent(id: string): boolean {

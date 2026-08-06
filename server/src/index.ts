@@ -11,6 +11,7 @@ import { createWorkflowRouter } from './api/workflows.js';
 import { createSSEHandler } from './api/sse.js';
 import { Workflows } from './core/workflows.js';
 import { SystemMetrics } from './core/system-metrics.js';
+import { UsagePoller, isMeteredExec } from './core/usage-probe.js';
 import { probeServices } from './core/service-probe.js';
 
 async function main() {
@@ -23,6 +24,11 @@ async function main() {
   // Host system-load sampler feeding the dashboard's top metrics bar.
   const sysMetrics = new SystemMetrics();
   sysMetrics.start();
+
+  // Rate-limit usage sampler for LOCAL metered brains (claude/codex on this
+  // host). Remote brains self-report through their heartbeat instead.
+  const usagePoller = new UsagePoller(store, () => config.orchestration.brains || {});
+  usagePoller.start();
 
   const app = express();
   app.use(express.json());
@@ -186,7 +192,13 @@ async function main() {
         capabilities: a.capabilities || [], registeredAt: a.registeredAt, lastHeartbeat: a.lastHeartbeat,
         live: now - new Date(a.lastHeartbeat).getTime() < 600000
       }));
-    res.json({ clients, counters: store.getCounters() });
+    // usage: per-brain rate-limit snapshots (local poller + remote heartbeats);
+    // localBrains: which of those live on THIS host, so the UI can render them
+    // as a separate "cowork host" card instead of mis-filing them under a client.
+    const localBrains = Object.entries(config.orchestration.brains || {})
+      .filter(([, b]) => b.location === 'local' && isMeteredExec(b.exec))
+      .map(([id]) => id);
+    res.json({ clients, counters: store.getCounters(), usage: store.getBrainUsage(), localBrains });
   });
 
   // ── Task artifacts (persistent per-task dir; downloadable) ─────────────────
@@ -303,6 +315,7 @@ async function main() {
     console.log(`${signal} received, shutting down...`);
     clearInterval(cleanup);
     sysMetrics.stop();
+    usagePoller.stop();
     dispatcher.stop();
     httpServer.close(() => process.exit(0));
     // Open SSE connections keep the server alive — force-exit after 3s

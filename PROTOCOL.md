@@ -101,7 +101,7 @@ The Cowork MCP Server exposes these tools via Streamable HTTP at `/mcp`:
 |------|---------|
 | `register_agent` | Register an agent session; optionally DECLARE runnable `brains` |
 | `deregister_agent` | Remove the agent and cascade-remove every brain it registered |
-| `heartbeat` | Update agent status |
+| `heartbeat` | Update agent status; may carry `usage` — the client's self-measured rate-limit snapshot per brain (`{ exec, windows: [{ label, usedPct, resetsAt }], at }`), shown as meters on the Connections cards. Only metered execs (claude/codex) report; hermes/ollama/script have no quota and send nothing |
 | `get_roster` | Query agent roster (~285 agents across 19 divisions) |
 | `create_task` | Create a cross-platform task |
 | `claim_task` | Claim a pending task |

@@ -75,6 +75,34 @@ export interface BrainEnv {
 }
 
 /**
+ * One rate-limit window of a metered brain (e.g. Claude's 5-hour session or
+ * 7-day cap, Codex's primary/secondary windows). Percent-used plus when it
+ * resets — exactly what the Connections cards render.
+ */
+export interface BrainUsageWindow {
+  /** Short human label: '5h', '7d', '7d-opus', … */
+  label: string;
+  /** Percent of the window consumed, 0–100. */
+  usedPct: number;
+  /** ISO timestamp when this window resets, when known. */
+  resetsAt?: string;
+}
+
+/**
+ * A point-in-time usage snapshot for one brain. Only brains whose exec has a
+ * queryable rate limit (claude, codex, …) ever produce one — hermes/ollama/
+ * script brains have no external quota, report nothing, and stay hidden in the
+ * UI. Local brains are probed by the server itself; remote brains self-report
+ * via the `usage` field of their heartbeat.
+ */
+export interface BrainUsage {
+  exec: string;
+  windows: BrainUsageWindow[];
+  /** ISO timestamp of the measurement (staleness marker in the UI). */
+  at: string;
+}
+
+/**
  * The RESULT VERIFIER — inspects each finished attempt so a soft failure (a
  * rate-limit / quota / overloaded notice, an auth error, or an empty answer) that
  * still exited 0 is NOT mistaken for a completed task. A bad verdict makes the

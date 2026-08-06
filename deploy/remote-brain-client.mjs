@@ -153,6 +153,97 @@ function stripAnsi(s) {
 let sessionId = null, rpcId = 0;
 const running = new Set();
 
+// ── Rate-limit usage self-report (Connections cards' brain meters) ──────────
+// Probes THIS host's metered CLIs and ships the snapshot with every heartbeat
+// as usage[brainId] = {exec, windows:[{label, usedPct, resetsAt}], at}. Only
+// claude/codex have a queryable quota; hermes/ollama/script brains have none
+// by design and report nothing (the dashboard hides them). Mirror of the
+// server's TS probes in server/src/core/usage-probe.ts — keep in sync.
+const USAGE_MS = +(process.env.USAGE_MS || 300000);
+let USAGE = {};   // brainId → snapshot; {} until the first successful probe
+const clampPct = n => Number.isFinite(+n) ? Math.max(0, Math.min(100, Math.round(+n * 10) / 10)) : null;
+
+async function probeClaudeUsage() {
+  let token;
+  try { token = JSON.parse(readFileSync(join(os.homedir(), '.claude', '.credentials.json'), 'utf8'))?.claudeAiOauth?.accessToken; }
+  catch { return null; }
+  if (!token) return null;
+  try {
+    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const label = k => k === 'session' || k === 'five_hour' ? '5h' : k === 'weekly' || k === 'seven_day' ? '7d' : String(k).replace(/^seven_day_/, '7d-');
+    const windows = [];
+    for (const l of Array.isArray(raw?.limits) ? raw.limits : []) {
+      const p = clampPct(l?.percent);
+      if (p == null || l?.is_active === false) continue;
+      windows.push({ label: label(l.kind || l.group || '?'), usedPct: p, ...(l.resets_at ? { resetsAt: l.resets_at } : {}) });
+    }
+    if (!windows.length) for (const k of ['five_hour', 'seven_day']) {
+      const p = clampPct(raw?.[k]?.utilization);
+      if (p != null) windows.push({ label: label(k), usedPct: p, ...(raw[k].resets_at ? { resetsAt: raw[k].resets_at } : {}) });
+    }
+    return windows.length ? windows : null;
+  } catch { return null; }
+}
+
+function probeCodexUsage() {
+  // Codex CLI stamps a rate_limits snapshot into its session rollout jsonl;
+  // read the newest one (no network, no credentials).
+  const rootDir = join(os.homedir(), '.codex', 'sessions');
+  const files = [];
+  const walk = (dir, depth) => {
+    let entries; try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const p = join(dir, e.name);
+      if (e.isDirectory() && depth < 4) walk(p, depth + 1);
+      else if (e.isFile() && e.name.endsWith('.jsonl')) { try { files.push({ p, m: statSync(p).mtimeMs }); } catch { /* raced */ } }
+    }
+  };
+  walk(rootDir, 0);
+  for (const { p, m } of files.sort((a, b) => b.m - a.m).slice(0, 5)) {
+    try {
+      const lines = readFileSync(p, 'utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"rate_limits"')) continue;
+        const ev = JSON.parse(lines[i]);
+        const rl = ev?.payload?.rate_limits || ev?.rate_limits;
+        if (!rl) continue;
+        const atMs = ev.timestamp ? new Date(ev.timestamp).getTime() : m;
+        const windows = [];
+        for (const key of ['primary', 'secondary']) {
+          const w = rl[key], pctUsed = clampPct(w?.used_percent);
+          if (pctUsed == null) continue;
+          const mins = +w.window_minutes;
+          const lbl = mins === 10080 ? '7d' : mins === 300 ? '5h' : mins > 0 ? (mins >= 1440 ? `${Math.round(mins / 1440)}d` : `${Math.round(mins / 60)}h`) : key;
+          windows.push({ label: lbl, usedPct: pctUsed, ...(Number.isFinite(+w.resets_in_seconds) ? { resetsAt: new Date(atMs + w.resets_in_seconds * 1000).toISOString() } : {}) });
+        }
+        if (windows.length) return windows;
+      }
+    } catch { /* unreadable → next file */ }
+  }
+  return null;
+}
+
+async function refreshUsage() {
+  const byExec = {};
+  for (const b of Object.values(BRAIN)) (byExec[b.exec] ||= []).push(b.id);
+  const next = {};
+  for (const [exec, ids] of Object.entries(byExec)) {
+    let windows = null;
+    try { windows = exec === 'claude' ? await probeClaudeUsage() : exec === 'codex' ? probeCodexUsage() : null; }
+    catch { /* fail-soft */ }
+    if (!windows) continue;
+    const snap = { exec, windows, at: new Date().toISOString() };
+    for (const id of ids) next[id] = snap;
+  }
+  // Keep the last good snapshot if this round failed entirely (transient net).
+  if (Object.keys(next).length || !Object.keys(USAGE).length) USAGE = next;
+}
+
 // ── Minimal MCP client over the streamable-HTTP transport ────────────────────
 async function rpc(method, params) {
   const headers = {
@@ -314,9 +405,17 @@ async function main() {
   const agentId = me.id;
   console.log(`[${AGENT_NAME}] registered as ${agentId} → ${URL_BASE}; serving brains: ${[...MY_IDS].join(', ')} (concurrency ${MAX_CONCURRENT})`);
 
+  // Measure quota usage now and on a slow timer; each heartbeat carries the
+  // cached snapshot (probing is too heavy to run per-heartbeat).
+  await refreshUsage().catch(() => {});
+  setInterval(() => refreshUsage().catch(() => {}), USAGE_MS).unref?.();
+
   for (;;) {
     try {
-      await tool('heartbeat', { agent_id: agentId, status: running.size ? 'working' : 'idle' });
+      await tool('heartbeat', {
+        agent_id: agentId, status: running.size ? 'working' : 'idle',
+        ...(Object.keys(USAGE).length ? { usage: USAGE } : {})
+      });
       if (running.size < MAX_CONCURRENT) {
         const inbox = await tool('list_inbox', { status: 'pending', limit: 50 });
         const mine = (Array.isArray(inbox) ? inbox : []).filter(t => MY_IDS.has(t?.context?.brain) && !running.has(t.id));

@@ -15,6 +15,58 @@ function timeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// Countdown twin of timeAgo — "2h 10m", "3d 4h", "now" — for rate-limit resets.
+function timeUntil(iso) {
+  if (!iso) return '';
+  const s = Math.floor((new Date(iso).getTime() - Date.now()) / 1000);
+  if (s <= 0) return 'now';
+  if (s < 3600) return `${Math.max(1, Math.ceil(s / 60))}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
+// "remote-ai-code-gen-cc-fable" → "cc-fable"; "local-cc-opus" → "cc-opus".
+// Falls back to the raw id when no exec marker is present.
+function shortBrain(id) {
+  const m = String(id).match(/(cc|agy|codex|ollama|ha)-[^]*$/);
+  return m ? m[0] : String(id);
+}
+
+// Usage meters for the metered brains among `brainIds` (rate-limit % + reset).
+// Brains with no usage snapshot (hermes/ollama/script — no quota) simply don't
+// appear. Brains sharing one account (e.g. all cc-* on a host) produce identical
+// snapshots, so meters are grouped per exec instead of repeated per brain.
+function usageMeters(brainIds, usage) {
+  const byExec = new Map();
+  for (const id of brainIds || []) {
+    const u = usage?.[id];
+    if (!u?.windows?.length) continue;
+    if (!byExec.has(u.exec)) byExec.set(u.exec, { u, names: [] });
+    byExec.get(u.exec).names.push(shortBrain(id));
+  }
+  if (!byExec.size) return '';
+  const blocks = [...byExec.entries()].map(([exec, { u, names }]) => {
+    const stale = Date.now() - new Date(u.at).getTime() > 1800000;
+    const rows = u.windows.map(w => {
+      const p = Math.round(w.usedPct);
+      const color = p >= 80 ? '#EF4444' : p >= 50 ? '#EAB308' : '#22C55E';
+      const reset = w.resetsAt ? ` · resets in ${timeUntil(w.resetsAt)}` : '';
+      return `<div class="usage-row" title="${w.resetsAt ? `resets ${new Date(w.resetsAt).toLocaleString()}` : 'reset time unknown'}">
+        <span class="usage-window">${esc(w.label)}</span>
+        <div class="usage-bar"><div class="usage-fill" style="width:${p}%;background:${color}"></div></div>
+        <span class="usage-pct" style="color:${color}">${p}%</span>
+        <span class="usage-reset">${esc(reset)}</span>
+      </div>`;
+    }).join('');
+    return `<div class="usage-brain">
+      <div class="usage-brain-head">${badge(exec, '#7C3AED')} <span class="usage-names">${names.map(esc).join(' · ')}</span>
+        <span class="usage-at"${stale ? ' style="color:#EAB308"' : ''}>measured ${timeAgo(u.at)}</span></div>
+      ${rows}
+    </div>`;
+  }).join('');
+  return `<div class="usage-panel">${blocks}</div>`;
+}
+
 // A task is "failed" when its whole fallback chain was exhausted. Prefer the
 // explicit flag set by the server; fall back to the result text / rejected status
 // so tasks that finished before the flag existed still categorize correctly.
@@ -660,8 +712,17 @@ class App {
   // ── Active Agents ──────────────────────────────────────────────────────
 
   async renderConnections() {
-    const { clients, counters } = await this.api.get('/connections');
-    const clientCards = clients.length ? `<div class="grid-3">` + clients.map(a => `
+    // One-shot render + a slow poll so the usage meters / reset countdowns and
+    // heartbeat ages stay current while the view is open. The timer calls the
+    // inner render (NOT renderConnections) so it never stacks new timers.
+    const render = () => this.renderConnectionsInner();
+    await render();
+    this.addViewTimer(() => render().then(createIcons).catch(() => { /* transient */ }), 60000);
+  }
+
+  async renderConnectionsInner() {
+    const { clients, counters, usage = {}, localBrains = [] } = await this.api.get('/connections');
+    const clientCards = clients.map(a => `
       <div class="card agent-card">
         <div class="agent-header">
           <span class="agent-title">${esc(a.agentName)}</span>
@@ -669,11 +730,28 @@ class App {
         </div>
         <p style="margin:6px 0">${badge(a.platform, '#D97757')} ${badge(a.status, STATUS_COLORS[a.status] || '#94A3B8')}</p>
         ${a.capabilities?.length ? `<p style="font-size:0.78rem; color:var(--text-muted); margin-top:6px">${a.capabilities.map(c => esc(c)).join(' · ')}</p>` : ''}
+        ${usageMeters(a.capabilities, usage)}
         <div class="agent-footer">
           <span><i data-lucide="heart" style="width:12px;height:12px;vertical-align:middle;margin-right:2px"></i> ${timeAgo(a.lastHeartbeat)}</span>
           <span>joined ${timeAgo(a.registeredAt)}</span>
         </div>
-      </div>`).join('') + `</div>`
+      </div>`);
+
+    // The cowork host's own metered brains (local claude/codex) get one card of
+    // their own — they belong to no MCP client but their quota matters just as
+    // much when picking a brain.
+    const hostMeters = usageMeters(localBrains, usage);
+    if (hostMeters) clientCards.unshift(`
+      <div class="card agent-card">
+        <div class="agent-header">
+          <span class="agent-title">cowork host</span>
+          ${badge('local', '#0EA5E9')}
+        </div>
+        <p style="margin:6px 0; font-size:0.78rem; color:var(--text-muted)">Brains the dispatcher runs on this machine.</p>
+        ${hostMeters}
+      </div>`);
+
+    const cardsHtml = clientCards.length ? `<div class="grid-3">${clientCards.join('')}</div>`
       : `<div class="empty-state"><div class="empty-state-icon"><i data-lucide="plug"></i></div><h3>No live MCP clients</h3><p>External clients appear here when they register + heartbeat.</p></div>`;
 
     // Invocation counters: per client × per brain (ran / submitted)
@@ -685,7 +763,7 @@ class App {
     }).join('');
 
     this.contentEl.innerHTML = `
-      ${clientCards}
+      ${cardsHtml}
       <div class="card" style="margin-top:var(--space-lg)">
         <h3 style="font-size:0.95rem; margin-bottom:8px">Brain invocations <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">(this session · resets on restart)</span></h3>
         ${counterRows ? `<table style="font-size:0.83rem"><thead><tr style="color:var(--text-muted);font-size:0.75rem"><th style="text-align:left">client</th><th style="text-align:left">brain</th><th style="text-align:right;padding-right:12px">ran</th><th style="text-align:right">submitted</th></tr></thead><tbody>${counterRows}</tbody></table>` : '<p style="color:var(--text-muted);font-size:0.85rem">No invocations yet.</p>'}

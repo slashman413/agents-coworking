@@ -147,13 +147,25 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
     }
   );
 
-  // 2. heartbeat
+  // 2. heartbeat — may carry a `usage` payload: the client's self-measured
+  //    rate-limit snapshot per brain id ({exec, windows:[{label, usedPct,
+  //    resetsAt}], at}). Only accepted for brains the agent itself declared
+  //    (its capabilities), so one client can never overwrite another's meters.
   server.tool(
     'heartbeat',
     {
       agent_id: z.string(),
       current_task: z.string().optional(),
-      status: z.enum(['idle', 'working', 'blocked']).optional()
+      status: z.enum(['idle', 'working', 'blocked']).optional(),
+      usage: z.record(z.object({
+        exec: z.string(),
+        at: z.string().optional(),
+        windows: z.array(z.object({
+          label: z.string(),
+          usedPct: z.number(),
+          resetsAt: z.string().optional()
+        })).max(8)
+      })).optional()
     },
     async (args) => {
       try {
@@ -163,6 +175,21 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
           status: args.status
         });
         if (!agent) throw new Error('Agent not found');
+        if (args.usage) {
+          const mine = new Set(agent.capabilities || []);
+          for (const [brainId, u] of Object.entries(args.usage)) {
+            if (!mine.has(brainId)) continue;
+            store.setBrainUsage(brainId, {
+              exec: u.exec,
+              at: u.at || new Date().toISOString(),
+              windows: u.windows.map(w => ({
+                label: w.label.slice(0, 16),
+                usedPct: Math.max(0, Math.min(100, w.usedPct)),
+                resetsAt: w.resetsAt
+              }))
+            });
+          }
+        }
         return { content: [{ type: 'text', text: JSON.stringify(agent) }] };
       } catch (e: any) {
         return { content: [{ type: 'text', text: e.message }], isError: true };
