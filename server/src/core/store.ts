@@ -23,6 +23,23 @@ export type CompletionDecision =
   | { action: 'wait-input'; questions?: string[] };
 export type CompletionGuard = (task: Task, result?: string) => Promise<CompletionDecision>;
 
+/**
+ * Canonical "did this task fail?" predicate — the SINGLE source of truth for the
+ * failed/red category, used by both the dashboard counter ({@link Store.getDashboard})
+ * and the re-run gate ({@link Store.rerunTask}). It MUST stay in lockstep with the
+ * frontend's `isTaskFailed` (server/public/js/app.js): a task is failed when the
+ * server flagged it, when it was explicitly rejected, or when it finished with a
+ * "FAILED…" summary even if the flag predates that task. Previously getDashboard
+ * used a stricter check (done && failed===true), so a rejected task — or a done
+ * task whose result starts with "FAILED" but was never flagged — rendered as a red
+ * "failed" card while the summary counted 0 failed.
+ */
+export function isFailedTask(task: Task): boolean {
+  return task.failed === true
+    || task.status === 'rejected'
+    || (task.status === 'done' && typeof task.result === 'string' && /^FAILED\b/i.test(task.result.trim()));
+}
+
 export class Store {
   private config: Config;
   private eventBus: EventBus;
@@ -409,10 +426,7 @@ export class Store {
   public rerunTask(taskId: string, brainOverride?: string): Task | null {
     const task = this.getTask(taskId);
     if (!task) return null;
-    const looksFailed = task.failed === true
-      || task.status === 'rejected'
-      || (task.status === 'done' && typeof task.result === 'string' && /^FAILED\b/i.test(task.result.trim()));
-    if (!looksFailed) return null;
+    if (!isFailedTask(task)) return null;
 
     const ctx: Record<string, any> = { ...(task.context || {}) };
     delete ctx.failedBrains;
@@ -858,10 +872,11 @@ export class Store {
     const pending = tasks.filter(t => t.status === 'pending').length;
     const waitingInput = tasks.filter(t => t.status === 'wait-input').length;
     const inProgress = tasks.filter(t => t.status === 'in-progress' || t.status === 'claimed').length;
-    const completed = tasks.filter(t => t.status === 'done').length;
-    const failed = tasks.filter(t => t.status === 'done' && (t as any).failed === true).length;
-    
-    
+    const failed = tasks.filter(isFailedTask).length;
+    // "completed" is every finished task (done or rejected); the UI derives the
+    // green "done" pill as completed - failed, so failed must be a subset here.
+    const completed = tasks.filter(t => t.status === 'done' || t.status === 'rejected').length;
+
     const platformStatus: Record<string, boolean> = {};
     for (const [id, p] of Object.entries(this.config.platforms)) {
       platformStatus[id] = p.enabled;
