@@ -299,7 +299,7 @@ function runModel(brain, prompt, artDir) {
   const argv = brain.exec === 'claude' ? ['claude', '-p', prompt, ...(brain.model ? ['--model', brain.model] : []), '--dangerously-skip-permissions']
     : brain.exec === 'hermes' ? ['hermes', ...(brain.model ? ['-m', brain.model] : []), '-z', prompt]
     : brain.exec === 'agy' ? ['agy', '-p', prompt]
-    : brain.exec === 'codex' ? ['codex', 'exec', ...(brain.model ? ['-m', brain.model] : []), prompt]
+    : brain.exec === 'codex' ? ['codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox', ...(brain.model ? ['-m', brain.model] : []), prompt]
     : brain.exec === 'ollama' ? (brain.model ? ['ollama', 'run', brain.model, prompt] : null)
     : null;
   if (!argv) return Promise.resolve({ ok: false, text: `unknown/misconfigured exec ${brain.exec}` });

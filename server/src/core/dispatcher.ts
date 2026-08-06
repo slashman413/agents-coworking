@@ -720,9 +720,19 @@ export class Dispatcher {
         // SIGTERM at taskTimeoutMs stays the single authority.
         return ['agy', '-p', prompt, '--print-timeout', `${this.config.orchestration.taskTimeoutMs}ms`, '--dangerously-skip-permissions'];
       case 'codex':
-        // OpenAI Codex CLI, non-interactive. `--` ends option parsing so a prompt
-        // that happens to start with a dash isn't mistaken for a flag.
-        return ['codex', 'exec', ...(roleCfg.model ? ['-m', roleCfg.model] : []), '--', prompt];
+        // OpenAI Codex CLI, non-interactive.
+        //  --skip-git-repo-check: we spawn codex with cwd = the task's artifacts
+        //    dir, which is NOT a git repo. Without this flag codex's pre-flight
+        //    aborts with "Not inside a trusted directory and --skip-git-repo-check
+        //    was not specified." before producing any output.
+        //  --dangerously-bypass-approvals-and-sandbox: the codex parallel of the
+        //    --dangerously-skip-permissions that the claude/agy brains use — runs
+        //    fully autonomously (never prompts for approval) and lets codex write
+        //    its artifacts. Cowork agents run with full permissions by design.
+        //  `--` ends option parsing so a prompt starting with a dash isn't
+        //    mistaken for a flag.
+        return ['codex', 'exec', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox',
+          ...(roleCfg.model ? ['-m', roleCfg.model] : []), '--', prompt];
       case 'ollama':
         // Local Ollama chat model (model required).
         if (!roleCfg.model) throw new Error('exec:ollama needs a model');
