@@ -156,9 +156,11 @@ const running = new Set();
 // ── Rate-limit usage self-report (Connections cards' brain meters) ──────────
 // Probes THIS host's metered CLIs and ships the snapshot with every heartbeat
 // as usage[brainId] = {exec, windows:[{label, usedPct, resetsAt}], at}. Only
-// claude/codex have a queryable quota; hermes/ollama/script brains have none
-// by design and report nothing (the dashboard hides them). Mirror of the
-// server's TS probes in server/src/core/usage-probe.ts — keep in sync.
+// claude/codex/agy have a queryable quota; hermes/ollama/script brains have
+// none by design and report nothing (the dashboard hides them). agy reports
+// REMAINING (inverted to used) and needs a supplied bearer token — see
+// probeAgyUsage. Mirror of the server's TS probes in
+// server/src/core/usage-probe.ts — keep in sync.
 const USAGE_MS = +(process.env.USAGE_MS || 300000);
 let USAGE = {};   // brainId → snapshot; {} until the first successful probe
 const clampPct = n => Number.isFinite(+n) ? Math.max(0, Math.min(100, Math.round(+n * 10) / 10)) : null;
@@ -228,13 +230,61 @@ function probeCodexUsage() {
   return null;
 }
 
+async function probeAgyUsage() {
+  // Antigravity has NO local quota file. Its quota lives behind the Code Assist
+  // RPC cloudcode-pa/v1internal:retrieveUserQuotaSummary and the CLI renders it
+  // as "% remaining" — so we INVERT to used = 100 - remaining. We never
+  // re-implement Antigravity's OAuth refresh (it holds the client secret
+  // in-process): a ready-to-use bearer token must be supplied via
+  // AGY_ACCESS_TOKEN, or AGY_TOKEN_FILE (a JSON file with `access_token`).
+  let token = process.env.AGY_ACCESS_TOKEN?.trim() || null;
+  if (!token && process.env.AGY_TOKEN_FILE) {
+    try { const j = JSON.parse(readFileSync(process.env.AGY_TOKEN_FILE.trim(), 'utf8')); token = j?.access_token || j?.token || null; }
+    catch { /* unreadable / refresh-only → no meter */ }
+  }
+  if (!token) return null;
+  const num = (...vs) => { for (const v of vs) { if (v == null) continue; const n = +v; if (Number.isFinite(n)) return n; } return null; };
+  const agyLabel = (b, g) => {
+    const mins = num(b?.windowMinutes, g?.windowMinutes);
+    const secs = num(b?.windowSeconds, b?.windowDurationSeconds, g?.windowSeconds);
+    const m = mins ?? (secs != null ? secs / 60 : null);
+    if (m != null && m > 0) return m === 10080 ? '7d' : m === 300 ? '5h' : (m >= 1440 ? `${Math.round(m / 1440)}d` : `${Math.round(m / 60)}h`);
+    const name = String(b?.displayName || b?.quotaId || b?.name || g?.displayName || g?.quotaId || '').trim();
+    return name ? name.slice(0, 12) : 'quota';
+  };
+  try {
+    const res = await fetch('https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary', {
+      method: 'POST', body: '{}',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const arr = (v, s) => Array.isArray(v) ? v : (s != null ? [s] : []);
+    const pairs = [];
+    for (const g of arr(raw?.quotaSummaryGroups || raw?.groups, raw?.quotaSummaryGroup))
+      for (const b of arr(g?.quotaSummaryBuckets || g?.buckets, g?.quotaSummaryBucket)) pairs.push([b, g]);
+    for (const b of arr(raw?.quotaSummaryBuckets || raw?.buckets, null)) pairs.push([b, raw]);
+    const windows = [];
+    for (const [b, g] of pairs) {
+      const remaining = num(b?.remaining, b?.remainingPercent, b?.percentRemaining, b?.bucketInfo?.remaining, b?.quotaInfo?.remaining);
+      if (remaining == null) continue;
+      const used = clampPct(100 - remaining);
+      if (used == null) continue;
+      const resetsAt = b?.resetTime || b?.resetsAt || b?.bucketInfo?.resetTime || g?.resetTime || null;
+      windows.push({ label: agyLabel(b, g), usedPct: used, ...(resetsAt ? { resetsAt } : {}) });
+    }
+    return windows.length ? windows : null;
+  } catch { return null; }
+}
+
 async function refreshUsage() {
   const byExec = {};
   for (const b of Object.values(BRAIN)) (byExec[b.exec] ||= []).push(b.id);
   const next = {};
   for (const [exec, ids] of Object.entries(byExec)) {
     let windows = null;
-    try { windows = exec === 'claude' ? await probeClaudeUsage() : exec === 'codex' ? probeCodexUsage() : null; }
+    try { windows = exec === 'claude' ? await probeClaudeUsage() : exec === 'codex' ? probeCodexUsage() : exec === 'agy' ? await probeAgyUsage() : null; }
     catch { /* fail-soft */ }
     if (!windows) continue;
     const snap = { exec, windows, at: new Date().toISOString() };

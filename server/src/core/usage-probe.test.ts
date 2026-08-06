@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeClaudeUsage, normalizeCodexRateLimits, isMeteredExec } from './usage-probe.js';
+import { normalizeClaudeUsage, normalizeCodexRateLimits, normalizeAgyQuota, isMeteredExec } from './usage-probe.js';
 
 // Shape captured from a live GET /api/oauth/usage response (values trimmed).
 const CLAUDE_LIVE_SHAPE = {
@@ -65,8 +65,40 @@ test('codex: unusual window sizes get derived labels; missing fields are skipped
   assert.deepEqual(w, [{ label: '1h', usedPct: 10, resetsAt: undefined }]);
 });
 
-test('metered execs: claude/codex yes; hermes/ollama/script/agy no', () => {
+test('agy: inverts remaining→used and derives window labels from grouped buckets', () => {
+  // Shape mirrors retrieveUserQuotaSummary: buckets nested under a group,
+  // each carrying a REMAINING percent (the CLI renders "%.0f%% remaining").
+  const w = normalizeAgyQuota({
+    quotaSummaryGroups: [{
+      quotaSummaryBuckets: [
+        { remaining: 82, windowMinutes: 300, resetTime: '2026-08-06T05:00:00Z' },
+        { remaining: 40.5, windowMinutes: 10080, resetTime: '2026-08-13T00:00:00Z' }
+      ]
+    }]
+  });
+  assert.deepEqual(w, [
+    { label: '5h', usedPct: 18, resetsAt: '2026-08-06T05:00:00Z' },
+    { label: '7d', usedPct: 59.5, resetsAt: '2026-08-13T00:00:00Z' }
+  ]);
+});
+
+test('agy: accepts flat buckets, alias fields, and slug labels; clamps + skips garbage', () => {
+  const w = normalizeAgyQuota({
+    buckets: [
+      { percentRemaining: 100, displayName: 'Gemini 3 Pro Requests' }, // used 0, name slug
+      { remaining: -5 },                                               // used clamps to 100
+      { displayName: 'no-remaining-field' }                            // skipped
+    ]
+  });
+  assert.equal(w.length, 2);
+  assert.deepEqual(w[0], { label: 'Gemini 3 Pro', usedPct: 0, resetsAt: undefined });
+  assert.equal(w[1].usedPct, 100);
+  assert.deepEqual(normalizeAgyQuota(null), []);
+});
+
+test('metered execs: claude/codex/agy yes; hermes/ollama/script no', () => {
   assert.equal(isMeteredExec('claude'), true);
   assert.equal(isMeteredExec('codex'), true);
-  for (const e of ['hermes', 'ollama', 'script', 'agy', undefined]) assert.equal(isMeteredExec(e), false);
+  assert.equal(isMeteredExec('agy'), true);
+  for (const e of ['hermes', 'ollama', 'script', undefined]) assert.equal(isMeteredExec(e), false);
 });

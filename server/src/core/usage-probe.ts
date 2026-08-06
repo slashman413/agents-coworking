@@ -16,17 +16,27 @@ import type { Store } from './store.js';
  *            resets_at (5h session, 7d caps when the plan has them).
  *   codex  — Codex CLI writes a `rate_limits` snapshot into every session
  *            rollout jsonl; read the newest one. No network call.
- *   agy    — no queryable quota interface known today; returns null. Add a
- *            probe here when Antigravity exposes one.
+ *   agy    — Antigravity (Google's agentic CLI) has NO local quota snapshot
+ *            file. Its quota lives behind the authenticated Code Assist RPC
+ *            `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+ *            (the CLI's own UI renders it as "%.0f%% remaining"). We probe it
+ *            when a ready-to-use bearer access token is supplied (env
+ *            AGY_ACCESS_TOKEN, or a token file exposing `access_token`) —
+ *            Antigravity itself keeps only a refresh token on disk (a
+ *            `user_refresh.antigravity` file under ~/.gemini) and mints access
+ *            tokens in-process, so we deliberately do NOT re-implement its OAuth
+ *            exchange or embed its client secret. NOTE: unlike claude/codex the
+ *            quota is reported as REMAINING, so we invert to used = 100 - remaining.
  *   hermes / ollama / script — self-hosted, no external rate limit BY DESIGN;
  *            deliberately absent so those brains never show a meter.
  *
- * The same claude/codex logic exists in plain-JS form in
+ * The same claude/codex/agy logic exists in plain-JS form in
  * deploy/remote-brain-client.mjs (zero-dep client, can't import this file);
  * keep the two in sync when changing normalization.
  */
 
 const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
+const AGY_QUOTA_URL = 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary';
 
 /** Clamp + round a percent into 0–100 with one decimal. */
 function pct(n: unknown): number | null {
@@ -150,10 +160,113 @@ function probeCodex(): BrainUsageWindow[] | null {
   return null;
 }
 
+/** First finite number among the candidates, else null. */
+function firstNum(...vals: unknown[]): number | null {
+  for (const v of vals) {
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** Short label for an Antigravity quota bucket — prefer a window duration,
+ *  else a compact slug of the bucket's display name / id, else 'quota'. */
+function agyLabel(bucket: any, group: any): string {
+  const mins = firstNum(bucket?.windowMinutes, group?.windowMinutes);
+  const secs = firstNum(bucket?.windowSeconds, bucket?.windowDurationSeconds, group?.windowSeconds);
+  const m = mins ?? (secs != null ? secs / 60 : null);
+  if (m != null && m > 0) {
+    if (m === 10080) return '7d';
+    if (m === 300) return '5h';
+    return m >= 1440 ? `${Math.round(m / 1440)}d` : `${Math.round(m / 60)}h`;
+  }
+  const name = String(bucket?.displayName || bucket?.quotaId || bucket?.name
+    || group?.displayName || group?.quotaId || '').trim();
+  return name ? name.slice(0, 12) : 'quota';
+}
+
+/**
+ * Normalize an Antigravity `retrieveUserQuotaSummary` response into windows.
+ * Antigravity's schema nests `QuotaSummaryBucket`s (each carrying a *remaining*
+ * percent) under one or more `QuotaSummaryGroup`s; we also accept a flat
+ * `buckets[]`. Unlike claude/codex the value is REMAINING, so we invert to
+ * usedPct = 100 - remaining. Best-effort and tolerant of field-name variants.
+ * Exported for tests.
+ */
+export function normalizeAgyQuota(raw: any): BrainUsageWindow[] {
+  const asArray = (v: any, single: any) =>
+    Array.isArray(v) ? v : (single != null ? [single] : []);
+  const groups = asArray(
+    raw?.quotaSummaryGroups || raw?.groups,
+    raw?.quotaSummaryGroup
+  );
+  const pairs: { b: any; g: any }[] = [];
+  for (const g of groups) {
+    for (const b of asArray(g?.quotaSummaryBuckets || g?.buckets, g?.quotaSummaryBucket)) {
+      pairs.push({ b, g });
+    }
+  }
+  for (const b of asArray(raw?.quotaSummaryBuckets || raw?.buckets, null)) {
+    pairs.push({ b, g: raw });
+  }
+  const windows: BrainUsageWindow[] = [];
+  for (const { b, g } of pairs) {
+    const remaining = firstNum(
+      b?.remaining, b?.remainingPercent, b?.percentRemaining,
+      b?.bucketInfo?.remaining, b?.quotaInfo?.remaining
+    );
+    if (remaining == null) continue;
+    const used = pct(100 - remaining);
+    if (used == null) continue;
+    windows.push({
+      label: agyLabel(b, g),
+      usedPct: used,
+      resetsAt: b?.resetTime || b?.resetsAt || b?.bucketInfo?.resetTime || g?.resetTime || undefined
+    });
+  }
+  return windows;
+}
+
+/** A ready-to-use Antigravity bearer access token, if one is supplied. We
+ *  never re-implement Antigravity's OAuth refresh (it holds the client secret
+ *  in-process): accept a token from AGY_ACCESS_TOKEN, or a JSON token file
+ *  named by AGY_TOKEN_FILE that already exposes an `access_token`. */
+function agyAccessToken(): string | null {
+  const env = process.env.AGY_ACCESS_TOKEN?.trim();
+  if (env) return env;
+  const file = process.env.AGY_TOKEN_FILE?.trim();
+  if (file) {
+    try {
+      const raw = fs.readFileSync(file, 'utf8');
+      const tok = JSON.parse(raw)?.access_token || JSON.parse(raw)?.token;
+      if (typeof tok === 'string' && tok) return tok;
+    } catch { /* unreadable / not JSON / refresh-only → no meter */ }
+  }
+  return null;
+}
+
+async function probeAgy(): Promise<BrainUsageWindow[] | null> {
+  const token = agyAccessToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(AGY_QUOTA_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return null;
+    const windows = normalizeAgyQuota(await res.json());
+    return windows.length ? windows : null;
+  } catch { return null; }
+}
+
 /** Execs we know how to meter on THIS host. */
 const PROBES: Record<string, () => Promise<BrainUsageWindow[] | null> | BrainUsageWindow[] | null> = {
   claude: probeClaude,
-  codex: probeCodex
+  codex: probeCodex,
+  agy: probeAgy
 };
 
 export function isMeteredExec(exec?: string): boolean { return !!exec && exec in PROBES; }
