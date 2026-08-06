@@ -80,7 +80,7 @@ All tools are called via the `cowork` MCP server. Use these tools directly.
 
 | Tool | Purpose | Key Arguments |
 |------|---------|---------------|
-| `register_agent` | Register as a worker; declare brains | `platform`, `agent_name`, `capabilities[]`, `brains[]` |
+| `register_agent` | Register as a worker; declare brains (supports `env` capability manifests) | `platform`, `agent_name`, `capabilities[]`, `brains[]` |
 | `deregister_agent` | Remove agent AND cascade-remove all its brains | `agent_id` |
 | `heartbeat` | Keep-alive; report status and current task | `agent_id`, `status` (`idle`/`working`/`blocked`), `current_task` |
 
@@ -154,6 +154,13 @@ ids for the same models.
 > them out of the default/division chains that the box's config depends on. Just
 > disconnect; brains persist (they're only removed by an explicit deregister).
 
+### Brain Environment Manifests (`env`)
+
+When declaring brains in `register_agent`, each brain object supports an optional `env` capability manifest (`BrainEnv: { paths[], tools[], secrets[], traits[] }`):
+- **Purpose**: Enables the router to avoid dispatching tasks to hosts lacking required CLI tools, directory paths, or credentials.
+- **Secrets Rule (Zero Leakage)**: The `secrets` array must declare credential **names only** (e.g., file basenames under `~/.priv/`), **never** secret values or file contents.
+- **Auto-Detection**: `deploy/remote-brain-client.mjs` automatically calls `detectEnv()` to probe installed binaries (`$ENV_TOOLS` or standard list), directories (`$ENV_PATHS`), and secret file basenames. The Cowork server defensively caps each list to ≤200 items of ≤300 characters (`capEnv`).
+
 ---
 
 ## Dispatcher — Automatic Execution (Two-Stage Roster Routing)
@@ -205,6 +212,14 @@ to claim.
 - **Remote brain client**: poll `list_inbox(status:"pending")`, take tasks whose
   `context.brain` is one of yours, `claim_task` → run → `complete_task`. Ready-made
   helper: `deploy/remote-brain-client.mjs`; onboarding doc: `JOIN-AS-A-BRAIN.md`.
+
+### Execution Timeouts & agy `--print-timeout`
+
+When the Cowork dispatcher launches Antigravity (`agy`) as a worker in print mode (`agy -p`), it automatically appends `--print-timeout ${taskTimeoutMs}ms` (pinning to Cowork's `config.json -> orchestration.taskTimeoutMs`, default 50 minutes / 3,000,000 ms). This prevents agy's default `5m0s` print mode wait cap from prematurely aborting multi-step operations (such as compiling or building and pushing repositories). Cowork acts as the sole timeout authority.
+
+### Lesson Ledger (WF-1 Cross-Task Memory)
+
+Cowork features an event-driven, human-gated learning system. When a task fails verification or parks on `wait-input`, the dispatcher deterministically extracts required tools, paths, and secrets (`extractRequires`) and appends a structured record to `decisions/lessons.jsonl`. Ledger logging is fail-soft and never throws or breaks dispatch loops, laying the foundation for human-gated proposals and routing rule improvements without autonomous background improver agents.
 
 ---
 
@@ -261,7 +276,7 @@ the dashboard.
 get_dashboard()
 ```
 
-Shows active agents, inbox stats, and service health.
+Shows active agents, inbox stats, and service health (`vllm`, `firecrawl`, and the `forgejo` self-hosted Git server at `http://localhost:3001`). The Portal launcher categorizes services (e.g., Forgejo under **Dev**).
 
 ### 2. Heartbeat
 
@@ -415,6 +430,7 @@ Body: { "params": { "topic": "value" }, "dryRun": false }
 
 - `http://localhost:6868/` — Web UI (dashboard, Connections, inbox, reports, Agents,
   Brains, roster) with raw/rendered markdown viewer and artifact downloads
+- **Inbox UX**: Real-time SSE updates preserve card expansion and scroll position; status pills display live counts; and a **+ New task** toolbar button lets you create and dispatch tasks with title, brief, priority, and target brain directly from the Inbox without routing through Chat.
 
 ---
 
