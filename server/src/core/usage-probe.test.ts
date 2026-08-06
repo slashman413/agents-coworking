@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeClaudeUsage, normalizeCodexRateLimits, normalizeAgyQuota, isMeteredExec } from './usage-probe.js';
+import { normalizeClaudeUsage, normalizeCodexRateLimits, normalizeAgyQuota, isMeteredExec, findRateLimitsSnapshot } from './usage-probe.js';
 
 // Shape captured from a live GET /api/oauth/usage response (values trimmed).
 const CLAUDE_LIVE_SHAPE = {
@@ -94,6 +94,21 @@ test('agy: accepts flat buckets, alias fields, and slug labels; clamps + skips g
   assert.deepEqual(w[0], { label: 'Gemini 3 Pro', usedPct: 0, resetsAt: undefined });
   assert.equal(w[1].usedPct, 100);
   assert.deepEqual(normalizeAgyQuota(null), []);
+});
+
+test('codex: finds rate_limits regardless of rollout nesting (version drift)', () => {
+  const snap = { primary: { used_percent: 5, window_minutes: 300 } };
+  // (a) modern shape: payload.rate_limits
+  assert.equal(findRateLimitsSnapshot({ type: 'event_msg', payload: { type: 'token_count', rate_limits: snap } }), snap);
+  // (b) legacy Event{id,msg} wrapper: payload.msg.rate_limits — the path the
+  //     old hard-coded probe missed, leaving the codex meter permanently empty.
+  assert.equal(findRateLimitsSnapshot({ type: 'event_msg', payload: { msg: { type: 'token_count', rate_limits: snap } } }), snap);
+  // (c) top-level rate_limits
+  assert.equal(findRateLimitsSnapshot({ rate_limits: snap }), snap);
+  // A bare {} rate_limits with no primary/secondary is not a usable snapshot.
+  assert.equal(findRateLimitsSnapshot({ payload: { rate_limits: {} } }), null);
+  assert.equal(findRateLimitsSnapshot({ type: 'response_item', payload: { text: 'hi' } }), null);
+  assert.equal(findRateLimitsSnapshot(null), null);
 });
 
 test('metered execs: claude/codex/agy yes; hermes/ollama/script no', () => {

@@ -192,6 +192,21 @@ async function probeClaudeUsage() {
   } catch { return null; }
 }
 
+// Locate a Codex rate_limits snapshot anywhere in a parsed rollout event.
+// Codex's rollout schema has drifted across versions (payload.rate_limits, the
+// event top level, or nested under payload.msg), so we search rather than
+// assume one path. Depth-capped. Mirror of findRateLimitsSnapshot in
+// server/src/core/usage-probe.ts.
+function findRateLimits(obj, depth = 0) {
+  if (!obj || typeof obj !== 'object' || depth > 6) return null;
+  const rl = obj.rate_limits;
+  if (rl && typeof rl === 'object' && (rl.primary || rl.secondary)) return rl;
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') { const f = findRateLimits(v, depth + 1); if (f) return f; }
+  }
+  return null;
+}
+
 function probeCodexUsage() {
   // Codex CLI stamps a rate_limits snapshot into its session rollout jsonl;
   // read the newest one (no network, no credentials).
@@ -212,7 +227,7 @@ function probeCodexUsage() {
       for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].includes('"rate_limits"')) continue;
         const ev = JSON.parse(lines[i]);
-        const rl = ev?.payload?.rate_limits || ev?.rate_limits;
+        const rl = findRateLimits(ev);
         if (!rl) continue;
         const atMs = ev.timestamp ? new Date(ev.timestamp).getTime() : m;
         const windows = [];

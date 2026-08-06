@@ -103,6 +103,7 @@ echo "Cowork MCP server started."
 echo "  Dashboard : http://localhost:$PORT/"
 echo "  MCP       : http://localhost:$PORT/mcp"
 echo "  Logs      : journalctl --user -u cowork-mcp -f"
-echo "  Restart   : systemctl --user restart cowork-mcp"
+echo "  Restart   : systemctl --user restart cowork-mcp   (re-runs the SAME build)"
+echo "  Update    : git pull && deploy/redeploy.sh          (rebuild + restart → go live)"
 echo
 echo "Next: install the coordination skill into your agent clients →  deploy/install-skill.sh"

@@ -122,6 +122,28 @@ export function normalizeCodexRateLimits(rl: any, atMs: number): BrainUsageWindo
   return windows;
 }
 
+/**
+ * Locate a Codex `rate_limits` snapshot anywhere within a parsed rollout event.
+ * Codex's rollout schema has drifted across CLI versions — the snapshot has
+ * lived at `payload.rate_limits`, at the event top level, and nested under
+ * `payload.msg` (the older `Event { id, msg }` wrapper). Rather than hard-code
+ * one path (and silently show no meter when it changes) we search for the first
+ * `rate_limits`-keyed object that actually carries a primary/secondary window.
+ * Depth-capped so a pathological line can't blow the stack. Exported for tests.
+ */
+export function findRateLimitsSnapshot(obj: any, depth = 0): any {
+  if (!obj || typeof obj !== 'object' || depth > 6) return null;
+  const rl = obj.rate_limits;
+  if (rl && typeof rl === 'object' && (rl.primary || rl.secondary)) return rl;
+  for (const v of Object.values(obj)) {
+    if (v && typeof v === 'object') {
+      const found = findRateLimitsSnapshot(v, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 /** Newest-first list of Codex session rollout files (sessions/YYYY/MM/DD/*.jsonl). */
 function codexSessionFiles(root = path.join(os.homedir(), '.codex', 'sessions')): string[] {
   const out: { file: string; mtime: number }[] = [];
@@ -149,7 +171,7 @@ function probeCodex(): BrainUsageWindow[] | null {
       for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].includes('"rate_limits"')) continue;
         const ev = JSON.parse(lines[i]);
-        const rl = ev?.payload?.rate_limits || ev?.rate_limits;
+        const rl = findRateLimitsSnapshot(ev);
         if (!rl) continue;
         const atMs = ev.timestamp ? new Date(ev.timestamp).getTime() : fs.statSync(file).mtimeMs;
         const windows = normalizeCodexRateLimits(rl, atMs);
