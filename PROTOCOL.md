@@ -63,6 +63,7 @@ Tasks are stored as JSON files in the `inbox/` directory:
     "branch": "main"
   },
   "tags": ["refactor", "auth"],
+  "scheduledAt": "2026-07-23T14:00:00.000Z",
   "createdAt": "2026-07-23T14:10:00.000Z",
   "claimedAt": null,
   "claimedBy": null,
@@ -74,8 +75,9 @@ Tasks are stored as JSON files in the `inbox/` directory:
 ### Task Status Lifecycle
 
 ```
-wait-input → pending → claimed → in-progress → done
-                                              → rejected
+scheduled ─┐
+wait-input ┴→ pending → claimed → in-progress → done
+                                               → rejected
 ```
 
 `wait-input` — a task carrying an unanswered human-in-the-loop `interaction`
@@ -83,6 +85,15 @@ packet. It is deliberately held OUT of the `pending` pool, so the orchestrator
 never schedules, routes, or reassigns it. Once a person submits their answers
 (`POST /api/inbox/:id/interaction`) the task is released to `pending` and enters
 normal scheduling. Tasks without an interaction packet start directly at `pending`.
+
+`scheduled` — a task whose `scheduledAt` launch time (ISO 8601) is still in the
+future. Like `wait-input` it is held OUT of the `pending` pool — never claimed,
+routed, or dispatched. The dispatcher checks every tick and releases each due
+task to `pending` (or to `wait-input` if it still carries an unanswered
+interaction packet). **Default is "now"**: a task created without `scheduledAt`
+(or with a past time) enters `pending` immediately. Set it via MCP
+`create_task { scheduled_at }`, REST `POST /api/inbox { scheduledAt }`, or the
+dashboard's "＋ New task" → *Run at* field.
 
 ### Priority Levels
 
@@ -103,7 +114,7 @@ The Cowork MCP Server exposes these tools via Streamable HTTP at `/mcp`:
 | `deregister_agent` | Remove the agent and cascade-remove every brain it registered |
 | `heartbeat` | Update agent status; may carry `usage` — the client's self-measured rate-limit snapshot per brain (`{ exec, windows: [{ label, usedPct, resetsAt }], at }`), shown as meters on the Connections cards. Only metered execs (claude/codex) report; hermes/ollama/script have no quota and send nothing |
 | `get_roster` | Query agent roster (~285 agents across 19 divisions) |
-| `create_task` | Create a cross-platform task |
+| `create_task` | Create a cross-platform task; optional `scheduled_at` (ISO 8601) parks it as `scheduled` until launch time (default: run now) |
 | `claim_task` | Claim a pending task |
 | `complete_task` | Mark task as done |
 | `list_inbox` | List tasks with filters |

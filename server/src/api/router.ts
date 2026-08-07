@@ -51,7 +51,11 @@ export function createApiRouter(store: Store, eventBus: EventBus): Router {
         skill: body.skill,
         context: body.context,
         tags: Array.isArray(body.tags) ? body.tags : undefined,
-        interaction: body.interaction && Array.isArray(body.interaction.fields) ? body.interaction : undefined
+        interaction: body.interaction && Array.isArray(body.interaction.fields) ? body.interaction : undefined,
+        // Scheduled launch (ISO 8601; default "now"). Accept both key styles —
+        // the dashboard sends scheduledAt, MCP-side callers may echo scheduled_at.
+        scheduledAt: typeof body.scheduledAt === 'string' ? body.scheduledAt
+          : typeof body.scheduled_at === 'string' ? body.scheduled_at : undefined
       }, {
         // Staged input uploads (from POST /api/uploads) the brain should read.
         inputs: Array.isArray(body.inputs) ? body.inputs : undefined

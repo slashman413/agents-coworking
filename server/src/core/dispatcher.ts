@@ -192,6 +192,14 @@ export class Dispatcher {
     // Rescue tasks orphaned by a crashed/exited agent (runs every tick, cheap).
     this.reclaimStaleClaims();
 
+    // Launch scheduled tasks whose time has come: releaseDueScheduled flips each
+    // due task into the pending pool (or onto wait-input if it still needs a
+    // person's answers) BEFORE the pending scan below, so a just-due task is
+    // dispatched on this very tick rather than the next one.
+    for (const t of this.store.releaseDueScheduled()) {
+      console.log(`Dispatcher: scheduled task ${t.id} is due (${t.scheduledAt}) — released to ${t.status} — ${t.title}`);
+    }
+
     // Advance any orchestrated workflow runs: for each run awaiting a decision,
     // the orchestrator brain picks the next step (or finishes the run).
     this.driveWorkflows();

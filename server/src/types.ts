@@ -315,14 +315,22 @@ export interface Task {
   /** `wait-input` = a task holding an unanswered human-in-the-loop interaction
    *  packet. It is deliberately NOT `pending`, so the dispatcher never schedules,
    *  routes, or hands it off to a fallback brain. It flips to `pending` (entering
-   *  normal scheduling) only once a person submits their answers. */
-  status: 'wait-input' | 'pending' | 'claimed' | 'in-progress' | 'done' | 'rejected';
+   *  normal scheduling) only once a person submits their answers.
+   *  `scheduled` = a task whose `scheduledAt` launch time is still in the future.
+   *  Like `wait-input` it is held OUT of the pending pool (never claimed, routed,
+   *  or dispatched); the dispatcher releases it to `pending` when its time comes. */
+  status: 'wait-input' | 'scheduled' | 'pending' | 'claimed' | 'in-progress' | 'done' | 'rejected';
   skill?: string;
   context?: Record<string, any>;
   tags?: string[];
   /** Human-in-the-loop questions/checklist a person answers from the Inbox card
    *  to supply information in advance. */
   interaction?: TaskInteraction;
+  /** ISO 8601 launch time. Default is "now": absent (or already past at creation)
+   *  means the task enters the pending pool immediately. A FUTURE time parks the
+   *  task on the `scheduled` status until the dispatcher releases it (see
+   *  Store.releaseDueScheduled). Normalized to UTC ISO form at creation. */
+  scheduledAt?: string;
   createdAt: string;
   claimedAt?: string;
   claimedBy?: string;
@@ -346,6 +354,8 @@ export interface DashboardData {
   activeAgents: number;
   inboxSummary: {
     pending: number;
+    /** Tasks parked on `scheduled` — waiting for their launch time. */
+    scheduled: number;
     /** Tasks parked on `wait-input` — blocked awaiting a person's answers. */
     waitingInput: number;
     inProgress: number;

@@ -222,6 +222,10 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
   // 4. create_task
   server.tool(
     'create_task',
+    'Create a cross-platform task. Launches now by default; pass scheduled_at ' +
+    '(an ISO 8601 date-time, e.g. "2026-08-08T09:00:00+08:00") to schedule it for ' +
+    'later — the task parks in the "scheduled" inbox category and the dispatcher ' +
+    'launches it when its time arrives.',
     {
       title: z.string(),
       description: z.string(),
@@ -233,6 +237,10 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
       skill: z.string().optional(),
       context: z.record(z.any()).optional(),
       tags: z.array(z.string()).optional(),
+      // Scheduled launch: ISO 8601 date-time. Default is "now" (omit = run
+      // immediately). A future time parks the task on the `scheduled` status
+      // until the dispatcher releases it at launch time.
+      scheduled_at: z.string().optional(),
       // Human-in-the-loop: request questions/checklist a person answers from the
       // Inbox card before/while the task runs. Their answers reach the executor
       // via context.humanInput.
@@ -259,7 +267,8 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
           skill: args.skill,
           context: args.context,
           tags: args.tags,
-          interaction: args.interaction as any
+          interaction: args.interaction as any,
+          scheduledAt: args.scheduled_at
         });
         return { content: [{ type: 'text', text: JSON.stringify(task) }] };
       } catch (e: any) {
@@ -308,7 +317,7 @@ function buildServer(config: Config, store: Store, eventBus: EventBus): McpServe
   server.tool(
     'list_inbox',
     {
-      status: z.enum(['wait-input', 'pending', 'claimed', 'in-progress', 'done', 'rejected']).optional(),
+      status: z.enum(['wait-input', 'scheduled', 'pending', 'claimed', 'in-progress', 'done', 'rejected']).optional(),
       platform: z.string().optional(),
       agent: z.string().optional(),
       limit: z.number().default(20)

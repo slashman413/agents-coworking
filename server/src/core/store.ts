@@ -329,12 +329,51 @@ export class Store {
       task.interaction.status ||= 'pending';
       if (task.interaction.status !== 'submitted') task.status = 'wait-input';
     }
+    // Scheduled launch. Default is "now": an absent or already-past scheduledAt
+    // leaves the task in the pool immediately. A FUTURE time parks it on the
+    // `scheduled` status — held out of the pending pool (never claimable or
+    // dispatched) until the dispatcher releases it (releaseDueScheduled). This
+    // deliberately overrides the wait-input parking above: a person can answer
+    // the interaction while the task waits, and the release decides which of
+    // pending/wait-input it lands on based on whether the answers arrived.
+    if (task.scheduledAt !== undefined) {
+      const at = Date.parse(String(task.scheduledAt));
+      if (!Number.isFinite(at)) {
+        throw new Error(`Invalid scheduledAt "${task.scheduledAt}" — use an ISO 8601 date-time (e.g. 2026-08-08T09:00:00+08:00)`);
+      }
+      task.scheduledAt = new Date(at).toISOString();
+      if (at > Date.now()) task.status = 'scheduled';
+    }
 
     const taskPath = path.join(this.config.paths.inbox, `${id}.json`);
     fs.writeFileSync(taskPath, JSON.stringify(task, null, 2));
     
     this.eventBus.emitTaskCreated(task);
     return task;
+  }
+
+  /**
+   * Release due SCHEDULED tasks into normal scheduling — the launch check the
+   * dispatcher runs every tick. A task parked on `scheduled` whose scheduledAt
+   * has arrived flips to `pending` (entering the dispatch pool that same tick),
+   * or to `wait-input` when it still carries an unanswered interaction packet so
+   * a person's answers are collected before it runs. A missing/garbled
+   * scheduledAt on a scheduled task releases immediately (fail open) rather than
+   * stranding the task forever. Returns the released tasks for logging.
+   */
+  public releaseDueScheduled(now: number = Date.now()): Task[] {
+    const released: Task[] = [];
+    for (const task of this.listTasks({ status: 'scheduled' })) {
+      const at = Date.parse(String(task.scheduledAt ?? ''));
+      if (Number.isFinite(at) && at > now) continue;   // not due yet
+      const awaiting = task.interaction && Array.isArray(task.interaction.fields)
+        && task.interaction.fields.length > 0 && task.interaction.status !== 'submitted';
+      task.status = awaiting ? 'wait-input' : 'pending';
+      this.saveTask(task);
+      this.eventBus.emitTaskCreated(task);   // nudge live dashboards to refresh
+      released.push(task);
+    }
+    return released;
   }
 
   public claimTask(params: { taskId: string; agentId: string; internal?: boolean }): Task | null {
@@ -870,6 +909,7 @@ export class Store {
     const activeAgents = this.activeAgents.size;
     const tasks = this.listTasks();
     const pending = tasks.filter(t => t.status === 'pending').length;
+    const scheduled = tasks.filter(t => t.status === 'scheduled').length;
     const waitingInput = tasks.filter(t => t.status === 'wait-input').length;
     const inProgress = tasks.filter(t => t.status === 'in-progress' || t.status === 'claimed').length;
     const failed = tasks.filter(isFailedTask).length;
@@ -886,6 +926,7 @@ export class Store {
       activeAgents,
       inboxSummary: {
         pending,
+        scheduled,
         waitingInput,
         inProgress,
         completed,

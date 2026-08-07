@@ -84,7 +84,7 @@ function fmtBytes(n) {
 }
 
 const STATUS_COLORS = {
-  'wait-input': '#A855F7', pending: '#EAB308', claimed: '#0EA5E9', 'in-progress': '#0EA5E9',
+  'wait-input': '#A855F7', scheduled: '#6366F1', pending: '#EAB308', claimed: '#0EA5E9', 'in-progress': '#0EA5E9',
   done: '#22C55E', rejected: '#EF4444',
   idle: '#94A3B8', working: '#22C55E', blocked: '#EF4444'
 };
@@ -437,7 +437,7 @@ class App {
     const labelStyle = 'display:block; font-size:0.72rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); margin:0 0 6px';
     content.innerHTML = `
       <h3 style="margin:0 0 8px; font-size:1.05rem">New task</h3>
-      <p style="font-size:0.85rem; color:var(--text-secondary); margin:0 0 16px; line-height:1.5">The task is queued as pending and dispatched by the next tick.</p>
+      <p style="font-size:0.85rem; color:var(--text-secondary); margin:0 0 16px; line-height:1.5">The task is queued as pending and dispatched by the next tick — or parked as <em>scheduled</em> until its run time if you set one.</p>
       <label style="${labelStyle}">Title</label>
       <input id="nt-title" style="${fieldStyle}; margin-bottom:12px" placeholder="Short imperative title…">
       <label style="${labelStyle}">Brief (markdown)</label>
@@ -447,6 +447,8 @@ class App {
         <option value="normal" selected>normal</option><option value="low">low</option>
         <option value="high">high</option><option value="urgent">urgent</option>
       </select>
+      <label style="${labelStyle}">Run at <span style="text-transform:none; letter-spacing:0">(optional — leave empty to run now)</span></label>
+      <input id="nt-when" type="datetime-local" style="${fieldStyle}; margin-bottom:12px">
       <label style="${labelStyle}">Brain to claim this task</label>
       <select id="nt-brain" style="${fieldStyle}; margin-bottom:20px">${opts}</select>
       <div style="display:flex; gap:8px; justify-content:flex-end">
@@ -470,17 +472,21 @@ class App {
       if (!title) { content.querySelector('#nt-title').style.borderColor = '#EF4444'; return; }
       if (!description) { content.querySelector('#nt-desc').style.borderColor = '#EF4444'; return; }
       const brain = content.querySelector('#nt-brain').value;
+      // datetime-local gives a LOCAL wall-clock string; toISOString converts it
+      // to the UTC instant the server schedules on. Empty = run now (default).
+      const when = content.querySelector('#nt-when').value;
       const body = {
         title, description,
         from: { platform: 'dashboard', agent: 'operator' },
         priority: content.querySelector('#nt-priority').value,
-        context: brain ? { brain } : {}
+        context: brain ? { brain } : {},
+        ...(when ? { scheduledAt: new Date(when).toISOString() } : {})
       };
       content.querySelector('#nt-ok').disabled = true;
       try {
         await this.api.post('/inbox', body);
         close();
-        this.toast('task created', brain ? `Queued — pinned to ${brain}.` : 'Queued — auto-routed via the brain chain.');
+        this.toast('task created', `${when ? `Scheduled for ${new Date(when).toLocaleString()}` : 'Queued'} — ${brain ? `pinned to ${brain}.` : 'auto-routed via the brain chain.'}`);
         if (this.currentView === 'inbox') this.renderInbox();
       } catch (err) {
         content.querySelector('#nt-ok').disabled = false;
@@ -582,7 +588,7 @@ class App {
       <div class="grid-4" style="margin-bottom: var(--space-xl)">
         ${stat('bot', status.activeAgents, 'Active Agents')}
         ${stat('inbox', status.inboxSummary.pending + status.inboxSummary.inProgress,
-               `Open Tasks (${status.inboxSummary.completed - (status.inboxSummary.failed || 0)} done${status.inboxSummary.failed ? `, ${status.inboxSummary.failed} failed` : ''}${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
+               `Open Tasks (${status.inboxSummary.completed - (status.inboxSummary.failed || 0)} done${status.inboxSummary.failed ? `, ${status.inboxSummary.failed} failed` : ''}${status.inboxSummary.scheduled ? `, ${status.inboxSummary.scheduled} scheduled` : ''}${status.inboxSummary.waitingInput ? `, ${status.inboxSummary.waitingInput} wait input` : ''})`)}
         ${stat('users', status.rosterCount, 'Agent Roster')}
       </div>
       <div class="grid-2" style="margin-bottom: var(--space-xl)">
@@ -1224,9 +1230,10 @@ class App {
     const counts = s ? {
       done: Math.max(0, (s.completed || 0) - (s.failed || 0)),
       'in-progress': s.inProgress || 0, pending: s.pending || 0,
+      scheduled: s.scheduled || 0,
       'wait-input': s.waitingInput || 0, failed: s.failed || 0
     } : null;
-    const pills = ['', 'done', 'in-progress', 'pending', 'wait-input', 'failed'].map(f => {
+    const pills = ['', 'done', 'in-progress', 'pending', 'scheduled', 'wait-input', 'failed'].map(f => {
       const n = counts && f ? counts[f] : null;
       const label = (f === '' ? 'All' : f) + (n !== null && n !== undefined ? ` ${n}` : '');
       const active = this.inboxFilter === f;
@@ -1257,7 +1264,7 @@ class App {
       const failed = isTaskFailed(t);
       // Files can be attached while a task is still schedulable, or to a failed one
       // (attach context, then re-run).
-      const canAttach = ['pending', 'wait-input'].includes(t.status) || failed;
+      const canAttach = ['pending', 'wait-input', 'scheduled'].includes(t.status) || failed;
       // Vertical brain fallback chain — brains in the order they were tried, the
       // last one at the bottom. Failed rungs are red with their reason; the final
       // (running / successful) brain sits at the end.
@@ -1281,6 +1288,7 @@ class App {
       <div class="card task-card" style="margin-bottom: var(--space-md)${failed ? ';border-left:3px solid #EF4444' : ''}" data-task="${esc(t.id)}" data-title="${esc((t.title || '').toLowerCase())}">
         <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
           ${failed ? badge('failed', '#EF4444') : badge(t.status, STATUS_COLORS[t.status] || '#94A3B8')}
+          ${t.status === 'scheduled' && t.scheduledAt ? badge(`⏰ ${new Date(t.scheduledAt).toLocaleString()}`, '#6366F1') : ''}
           ${agentLabel ? badge(agentLabel, '#7C3AED') : ''}
           ${t.interaction && t.interaction.status !== 'submitted' ? badge('⌛ awaiting input', '#EAB308') : ''}
           ${t.interaction && t.interaction.status === 'submitted' ? badge('✓ input received', '#22C55E') : ''}
