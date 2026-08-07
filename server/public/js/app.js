@@ -196,7 +196,7 @@ class App {
     this.agents = new Map();   // agent UUID → { name, platform } for human-readable labels
     this.chatMessages = [];    // Chat view conversation state (persists across nav within a session)
     this.chatSel = { brain: '', division: '', agent: '' };
-    this.chatBusy = false;
+    this.chatBusyBrains = new Set();  // brain keys ('' selection → 'auto') with a chat in flight — the composer locks per brain, not globally
     this.chatAttachments = [];  // File[] staged in the composer, sent as task inputs
     this.chatSessions = this.loadChatSessions();  // persisted recent chat sessions (newest first)
     this.chatSessionId = null;                    // id of the session currently open in the composer
@@ -865,7 +865,16 @@ class App {
     });
 
     // Send even with no text if files are attached (e.g. "here, read these").
-    const doSend = () => { const t = input.value.trim(); if ((t || this.chatAttachments.length) && !this.chatBusy) { input.value = ''; input.style.height = 'auto'; this.sendChat(t); } };
+    const doSend = () => {
+      const t = input.value.trim();
+      if (!t && !this.chatAttachments.length) return;
+      const busyKey = this.chatSel.brain || 'auto';
+      if (this.chatBusyBrains.has(busyKey)) {
+        this.toast('brain busy', `${busyKey === 'auto' ? 'Auto-routed chat' : busyKey} is still working — pick another brain or wait for its reply.`);
+        return;
+      }
+      input.value = ''; input.style.height = 'auto'; this.sendChat(t);
+    };
     this.contentEl.querySelector('#chat-send').addEventListener('click', doSend);
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
     this.contentEl.querySelector('#chat-new').addEventListener('click', () => this.startNewChat());
@@ -1093,8 +1102,11 @@ class App {
   }
 
   async sendChat(text) {
-    this.chatBusy = true;
     const { brain, division, agent } = this.chatSel;
+    // Lock only THIS brain (or the auto-route lane) while its task runs; the
+    // user can switch the selector and chat with any other brain in parallel.
+    const busyKey = brain || 'auto';
+    this.chatBusyBrains.add(busyKey);
     const context = {};
     if (brain) context.brain = brain;
     if (agent) context.agent = agent; else if (division) context.division = division;
@@ -1132,7 +1144,7 @@ class App {
     } catch (e) {
       ph.pending = false; ph.content = `⚠️ ${e.message}`;
     } finally {
-      this.chatBusy = false;
+      this.chatBusyBrains.delete(busyKey);
       this.renderChatMessages();
       this.persistCurrentChat();   // snapshot this exchange into the recent list
       this.renderChatRecent();

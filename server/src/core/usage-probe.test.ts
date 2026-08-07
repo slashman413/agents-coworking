@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeClaudeUsage, normalizeCodexRateLimits, normalizeAgyQuota, isMeteredExec, findRateLimitsSnapshot } from './usage-probe.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { normalizeClaudeUsage, normalizeCodexRateLimits, normalizeAgyQuota, isMeteredExec, findRateLimitsSnapshot, discoverAgyRefreshToken } from './usage-probe.js';
 
 // Shape captured from a live GET /api/oauth/usage response (values trimmed).
 const CLAUDE_LIVE_SHAPE = {
@@ -37,6 +40,32 @@ test('claude: falls back to five_hour/seven_day objects when limits[] is absent'
     { label: '5h', usedPct: 40, resetsAt: 'X' },
     { label: '7d', usedPct: 71.5, resetsAt: 'Y' }
   ]);
+});
+
+test('claude: fallback picks up ANY utilization-bearing window key (weekly variants)', () => {
+  const w = normalizeClaudeUsage({
+    five_hour: { utilization: 40, resets_at: 'X' },
+    seven_day: { utilization: 71.5, resets_at: 'Y' },
+    seven_day_opus: { utilization: 12, resets_at: 'Z' },
+    seven_day_oauth_apps: null,                          // null windows skipped
+    member_dashboard_available: false                    // non-window keys skipped
+  });
+  assert.deepEqual(w.map(x => [x.label, x.usedPct]), [['5h', 40], ['7d', 71.5], ['7d-opus', 12]]);
+});
+
+test('claude: appends the extra-usage credits row on both paths; caps at 8 windows', () => {
+  const extra = { is_enabled: true, utilization: 94.88 };
+  // limits[] path (the live shape) still gets the credits row appended.
+  const a = normalizeClaudeUsage({ ...CLAUDE_LIVE_SHAPE, extra_usage: extra });
+  assert.deepEqual(a.map(x => x.label), ['5h', 'credits']);
+  assert.equal(a[1].usedPct, 94.9);
+  // fallback path too, and disabled/garbage credit blocks are ignored.
+  const b = normalizeClaudeUsage({ five_hour: { utilization: 10 }, extra_usage: extra });
+  assert.deepEqual(b.map(x => x.label), ['5h', 'credits']);
+  assert.deepEqual(normalizeClaudeUsage({ five_hour: { utilization: 10 }, extra_usage: { is_enabled: false, utilization: 50 } }).map(x => x.label), ['5h']);
+  // cap: 9 window keys + credits → 8 rows total (heartbeat schema max).
+  const many = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`seven_day_v${i}`, { utilization: i }]));
+  assert.equal(normalizeClaudeUsage({ ...many, extra_usage: extra }).length, 8);
 });
 
 test('claude: clamps out-of-range percents and returns [] on garbage', () => {
@@ -109,6 +138,26 @@ test('codex: finds rate_limits regardless of rollout nesting (version drift)', (
   assert.equal(findRateLimitsSnapshot({ payload: { rate_limits: {} } }), null);
   assert.equal(findRateLimitsSnapshot({ type: 'response_item', payload: { text: 'hi' } }), null);
   assert.equal(findRateLimitsSnapshot(null), null);
+});
+
+test('agy: discovers a refresh token from user_refresh.antigravity or oauth_creds.json', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-home-'));
+  const gemini = path.join(home, '.gemini');
+  fs.mkdirSync(gemini, { recursive: true });
+  try {
+    assert.equal(discoverAgyRefreshToken(home), null);   // nothing on disk yet
+    // gemini-cli oauth_creds.json with a refresh_token
+    fs.writeFileSync(path.join(gemini, 'oauth_creds.json'), JSON.stringify({ access_token: 'a', refresh_token: '1//gemini-rt', expiry_date: 1 }));
+    assert.equal(discoverAgyRefreshToken(home), '1//gemini-rt');
+    // Antigravity's bare-string user_refresh.antigravity wins (checked first)
+    fs.writeFileSync(path.join(gemini, 'user_refresh.antigravity'), '1//agy-rt\n');
+    assert.equal(discoverAgyRefreshToken(home), '1//agy-rt');
+    // ...and a JSON-shaped variant of that file also works
+    fs.writeFileSync(path.join(gemini, 'user_refresh.antigravity'), JSON.stringify({ refresh_token: '1//agy-json-rt' }));
+    assert.equal(discoverAgyRefreshToken(home), '1//agy-json-rt');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('metered execs: claude/codex/agy yes; hermes/ollama/script no', () => {

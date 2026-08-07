@@ -19,14 +19,16 @@ import type { Store } from './store.js';
  *   agy    — Antigravity (Google's agentic CLI) has NO local quota snapshot
  *            file. Its quota lives behind the authenticated Code Assist RPC
  *            `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
- *            (the CLI's own UI renders it as "%.0f%% remaining"). We probe it
- *            when a ready-to-use bearer access token is supplied (env
- *            AGY_ACCESS_TOKEN, or a token file exposing `access_token`) —
- *            Antigravity itself keeps only a refresh token on disk (a
- *            `user_refresh.antigravity` file under ~/.gemini) and mints access
- *            tokens in-process, so we deliberately do NOT re-implement its OAuth
- *            exchange or embed its client secret. NOTE: unlike claude/codex the
- *            quota is reported as REMAINING, so we invert to used = 100 - remaining.
+ *            (the CLI's own UI renders it as "%.0f%% remaining"). Bearer token,
+ *            in order: AGY_ACCESS_TOKEN env; a cached access token from
+ *            AGY_TOKEN_FILE / Gemini CLI's ~/.gemini/oauth_creds.json (expiry
+ *            checked); or one minted from a discovered refresh token
+ *            (AGY_REFRESH_TOKEN, or Antigravity's own
+ *            ~/.gemini/user_refresh.antigravity) via the standard Google OAuth
+ *            refresh grant using the public Gemini-CLI installed-app client
+ *            (override with AGY_CLIENT_ID / AGY_CLIENT_SECRET). NOTE: unlike
+ *            claude/codex the quota is reported as REMAINING, so we invert to
+ *            used = 100 - remaining.
  *   hermes / ollama / script — self-hosted, no external rate limit BY DESIGN;
  *            deliberately absent so those brains never show a meter.
  *
@@ -48,8 +50,13 @@ function pct(n: unknown): number | null {
 /**
  * Normalize the Anthropic OAuth usage payload into windows. Prefers the
  * structured `limits[]` array ({kind, percent, resets_at}); falls back to the
- * legacy five_hour/seven_day objects ({utilization, resets_at}). Exported for
- * tests.
+ * per-window objects ({utilization, resets_at}) — ANY `*_hour`/`seven_day*`
+ * style key that carries a utilization, not a hard-coded list, because the
+ * payload keeps growing window variants (seven_day_opus, seven_day_oauth_apps,
+ * …) and plans differ in which are non-null. Weekly caps therefore surface
+ * whenever the account has them. Also appends the extra-usage credit spend
+ * (monthly overflow credits) as a `credits` window when enabled. Capped at 8
+ * windows — the heartbeat schema's limit. Exported for tests.
  */
 export function normalizeClaudeUsage(raw: any): BrainUsageWindow[] {
   const windows: BrainUsageWindow[] = [];
@@ -64,15 +71,20 @@ export function normalizeClaudeUsage(raw: any): BrainUsageWindow[] {
       windows.push({ label: label(String(l.kind || l.group || '?')), usedPct: p, resetsAt: l.resets_at || undefined });
     }
   }
-  if (!windows.length) {
-    for (const key of ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet']) {
-      const w = raw?.[key];
+  if (!windows.length && raw && typeof raw === 'object') {
+    for (const [key, w] of Object.entries<any>(raw)) {
+      if (key === 'extra_usage' || key === 'spend') continue;   // credit spend, added below
       const p = pct(w?.utilization);
       if (p == null) continue;
       windows.push({ label: label(key), usedPct: p, resetsAt: w.resets_at || undefined });
     }
   }
-  return windows;
+  const extra = raw?.extra_usage;
+  const extraPct = pct(extra?.utilization);
+  if (extra?.is_enabled && extraPct != null) {
+    windows.push({ label: 'credits', usedPct: extraPct, resetsAt: extra.resets_at || undefined });
+  }
+  return windows.slice(0, 8);
 }
 
 /** Read Claude Code's OAuth token from the standard credentials file. */
@@ -250,26 +262,89 @@ export function normalizeAgyQuota(raw: any): BrainUsageWindow[] {
   return windows;
 }
 
-/** A ready-to-use Antigravity bearer access token, if one is supplied. We
- *  never re-implement Antigravity's OAuth refresh (it holds the client secret
- *  in-process): accept a token from AGY_ACCESS_TOKEN, or a JSON token file
- *  named by AGY_TOKEN_FILE that already exposes an `access_token`. */
-function agyAccessToken(): string | null {
-  const env = process.env.AGY_ACCESS_TOKEN?.trim();
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+// Gemini CLI's Code Assist OAuth client, published in the open-source
+// google-gemini/gemini-cli repo (an "installed app" client — Google documents
+// its secret as non-confidential by design). Antigravity shares the ~/.gemini
+// credential dir and the same cloudcode-pa quota RPC; if its refresh tokens
+// turn out to be minted for a different client, the exchange fails soft (no
+// meter) and AGY_CLIENT_ID / AGY_CLIENT_SECRET override these.
+const AGY_DEFAULT_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
+const AGY_DEFAULT_CLIENT_SECRET = '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';
+
+/** Find a Google OAuth refresh token for Antigravity/Gemini on this host:
+ *  AGY_REFRESH_TOKEN, the AGY_TOKEN_FILE json, Antigravity's own
+ *  `user_refresh.antigravity` (raw token or json), or Gemini CLI's
+ *  `oauth_creds.json`. Exported for tests (home is injectable). */
+export function discoverAgyRefreshToken(home = os.homedir()): string | null {
+  const env = process.env.AGY_REFRESH_TOKEN?.trim();
   if (env) return env;
-  const file = process.env.AGY_TOKEN_FILE?.trim();
-  if (file) {
+  const candidates = [
+    process.env.AGY_TOKEN_FILE?.trim(),
+    path.join(home, '.gemini', 'user_refresh.antigravity'),
+    path.join(home, '.gemini', 'oauth_creds.json')
+  ].filter((f): f is string => !!f);
+  for (const file of candidates) {
+    let raw: string;
+    try { raw = fs.readFileSync(file, 'utf8').trim(); } catch { continue; }
     try {
-      const raw = fs.readFileSync(file, 'utf8');
-      const tok = JSON.parse(raw)?.access_token || JSON.parse(raw)?.token;
+      const tok = JSON.parse(raw)?.refresh_token;
       if (typeof tok === 'string' && tok) return tok;
-    } catch { /* unreadable / not JSON / refresh-only → no meter */ }
+    } catch {
+      // Not JSON — user_refresh.antigravity is the bare refresh token string.
+      if (raw && !raw.includes('{') && !raw.includes('\n')) return raw;
+    }
   }
   return null;
 }
 
+// Minted access token cache — refresh grants are rate-limited, don't re-mint
+// on every 5-minute poll while the last token is still live.
+let agyMinted: { token: string; expMs: number } | null = null;
+
+/** A ready-to-use Antigravity bearer access token: AGY_ACCESS_TOKEN, an
+ *  AGY_TOKEN_FILE / Gemini-CLI `oauth_creds.json` cached access token that
+ *  hasn't expired, or one minted from a discovered refresh token. */
+async function agyAccessToken(): Promise<string | null> {
+  const env = process.env.AGY_ACCESS_TOKEN?.trim();
+  if (env) return env;
+  const files = [
+    process.env.AGY_TOKEN_FILE?.trim(),
+    path.join(os.homedir(), '.gemini', 'oauth_creds.json')
+  ].filter((f): f is string => !!f);
+  for (const file of files) {
+    try {
+      const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const tok = j?.access_token || j?.token;
+      const exp = Number(j?.expiry_date);   // gemini-cli stamps epoch-ms expiry
+      if (typeof tok === 'string' && tok && (!Number.isFinite(exp) || exp > Date.now() + 60000)) return tok;
+    } catch { /* unreadable / not JSON → next source */ }
+  }
+  if (agyMinted && agyMinted.expMs > Date.now() + 60000) return agyMinted.token;
+  const refresh = discoverAgyRefreshToken();
+  if (!refresh) return null;
+  try {
+    const res = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: refresh,
+        client_id: process.env.AGY_CLIENT_ID?.trim() || AGY_DEFAULT_CLIENT_ID,
+        client_secret: process.env.AGY_CLIENT_SECRET?.trim() || AGY_DEFAULT_CLIENT_SECRET
+      }).toString(),
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return null;
+    const j: any = await res.json();
+    if (typeof j?.access_token !== 'string' || !j.access_token) return null;
+    agyMinted = { token: j.access_token, expMs: Date.now() + (Number(j.expires_in) || 3600) * 1000 };
+    return agyMinted.token;
+  } catch { return null; }
+}
+
 async function probeAgy(): Promise<BrainUsageWindow[] | null> {
-  const token = agyAccessToken();
+  const token = await agyAccessToken();
   if (!token) return null;
   try {
     const res = await fetch(AGY_QUOTA_URL, {
