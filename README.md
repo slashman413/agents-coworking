@@ -4,7 +4,7 @@
 
 
 A filesystem-based MCP server + Web UI dashboard that enables multi-platform AI
-agents to coordinate, dispatch tasks, and share reports — all through a single
+agents to coordinate, dispatch tasks, and share results — all through a single
 pane of glass.
 
 > **Are you an LLM instance on another machine wanting to contribute your models?**
@@ -105,9 +105,11 @@ Edit `~/.cowork/config.json` to match your environment:
   "paths": {
     "agencyAgents": "./agency-agents",  // ← Path to agency-agents repo
     "inbox": "./inbox",
-    "reports": "./reports",
     "status": "./.status",
-    "decisions": "./decisions"
+    "decisions": "./decisions",
+    "workflows": "./workflows",
+    "artifacts": "./artifacts",
+    "inputs": "./inputs"
   }
 }
 ```
@@ -237,7 +239,8 @@ MCP can connect to `http://localhost:6868/mcp`.
 ## Task Execution — the Dispatcher
 
 The server includes a **dispatcher** that turns queued tasks into real agent runs.
-Output becomes the task `result`; the full transcript is filed as a report.
+Output becomes the task `result`; the full transcript is saved as `result.md` in the
+task's artifacts dir.
 
 Every task lands in the **Task Inbox**, tagged with the division/agent that ran it and the
 brain it ran on, with its output artifacts attached and filterable by status
@@ -276,9 +279,9 @@ Tag a task `manual` to never auto-execute.
   in the **Agents** view (`PUT /api/chains/division/:division`; empty = use default).
 
 A chain runs top → bottom: the task runs on `chain[0]`; on failure the dispatcher
-**hands over** to `chain[1]`, then `[2]`… filing a report each attempt, until
-success or the chain is exhausted. Pin a single task to one brain with
-`context.brain: "<id>"`.
+**hands over** to `chain[1]`, then `[2]`… recording the failed brain on the task
+each attempt, until success or the chain is exhausted. Pin a single task to one
+brain with `context.brain: "<id>"`.
 
 The **Agents** view exposes the per-division chain for every division — drag to reorder,
 `＋ add brain…`, or reset to the global default. No template edits, no restart.
@@ -373,7 +376,7 @@ systemctl --user daemon-reload && systemctl --user enable --now cowork-remote-br
 It connects to `COWORK_URL/mcp`, `register_agent`s (declaring its `BRAINS`, which
 auto-register into the registry), then polls and claims only tasks whose
 `context.brain` is one of its brain ids, runs the matching `EXEC`/`MODEL`, and
-`complete_task`s with a filed report — appearing in **Connections** like any other
+`complete_task`s with its result and uploaded artifacts — appearing in **Connections** like any other
 client. **Flexible**: the same script serves any brain by changing env only.
 **Scalable**: add machines/brains by adding `<name>.env` files; claims are atomic
 (single-process compare-and-set) so even multiple clients on the *same* brain id
@@ -394,7 +397,7 @@ while running.
 CEO flow: tell Hermes (e.g. via Discord) an idea → Hermes creates ONE task with
 `context.agent: "orchestrator"` → the orchestrator decomposes it into subtasks via
 `POST /api/inbox` → each subtask is two-stage-routed to a roster agent on its brain
-chain → results and full reports appear live on the dashboard.
+chain → results and artifacts appear live on the dashboard.
 
 ### LLM classifier — no task left behind
 
@@ -655,7 +658,6 @@ cowork/
 │   └── public/              # Web UI (HTML/CSS/JS)
 ├── deploy/                  # systemd units, remote-brain client, presets, skills
 ├── inbox/                   # Task queue (JSON files, auto-managed)
-├── reports/                 # Generated reports (markdown)
 ├── artifacts/               # Per-task OUTPUT files (audio/video/md), downloadable
 ├── inputs/                  # Per-task INPUT files a person attached for the brain (gitignored)
 ├── decisions/               # Decision log
@@ -748,9 +750,11 @@ curl -X POST http://localhost:6868/mcp \
   "paths": {
     "agencyAgents": "./agency-agents",
     "inbox": "./inbox",
-    "reports": "./reports",
     "status": "./.status",
-    "decisions": "./decisions"
+    "decisions": "./decisions",
+    "workflows": "./workflows",
+    "artifacts": "./artifacts",
+    "inputs": "./inputs"
   },
   "platforms": {
     "claude": {

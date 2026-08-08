@@ -1,8 +1,9 @@
 ---
 name: cowork
 description: >-
-  Multi-agent Cowork MCP framework: register agents with brains, dispatch tasks,
-  heartbeat, roster, inbox, reports, dashboard. Local MCP server at :6868.
+  Multi-agent Cowork MCP framework: register agents with brains, dispatch and
+  schedule tasks, heartbeat, roster, inbox, artifacts, dashboard. Local MCP
+  server at :6868.
 version: 1.0.0
 author: Hermes
 platforms: [linux]
@@ -15,7 +16,10 @@ metadata:
 
 Multi-agent coordination framework (slashman413/cowork) running as a local MCP server
 on `http://localhost:6868`. Agents register with capabilities AND brains (model specs),
-dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
+dispatch cross-platform tasks, heartbeat, and query roster/inbox.
+
+> **There is no report store.** `file_report` and `complete_task(report_path:)` were
+> removed. A task's complete record is `task.result` + `artifacts/<task-id>/`.
 
 > **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
 > put output in `$COWORK_ARTIFACTS_DIR`, use your full permissions freely, and ask
@@ -26,7 +30,7 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 - "Dispatch a task to Claude for code review" / "create a task for another agent"
 - "Show me the agent roster" / "what agents are available"
 - "Check my inbox" / "list pending tasks"
-- "File a report" after completing work
+- "Schedule this for 9am tomorrow" (`create_task(scheduled_at: …)`)
 - "Show the dashboard" / "what's happening across agents"
 - "Register this agent" / "add my brains"
 - Cross-platform agent coordination (Hermes, Claude, Gemini, Antigravity, Codex, etc.)
@@ -61,9 +65,9 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 | `heartbeat` | Update status and current task (keep agent alive) |
 | `deregister_agent` | Remove agent and all its brains from the registry |
 | `get_roster` | Search agents across all platforms |
-| `create_task` | Create a task for another agent/platform |
+| `create_task` | Create a task for another agent/platform; optional `scheduled_at` (ISO 8601) parks it until launch time, optional `interaction` asks a human for input first |
 | `claim_task` | Claim a pending inbox task |
-| `complete_task` | Mark a task as done with results |
+| `complete_task` | Mark a task as done — `task_id` + `result` only |
 | `list_inbox` | List inbox tasks with status/platform filters |
 | `get_dashboard` | Get full dashboard data (agents, inbox, services) |
 | `list_resources` | List available resources from MCP server |
@@ -85,13 +89,19 @@ dispatch cross-platform tasks, heartbeat, query roster/inbox, and file reports.
 | GET | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | POST | `/api/inbox` | Create a new task |
 | PATCH | `/api/inbox/:id` | Claim or complete a task |
+| POST | `/api/inbox/:id/rerun` | Re-queue a FAILED (chain-exhausted) task from the top of its chain |
+| POST | `/api/inbox/:id/continue` | Spawn a follow-up to a finished task (same brain by default) |
+| POST | `/api/inbox/:id/interaction` | Submit a person's answers → releases a `wait-input` task |
 | GET | `/api/config` | Current configuration |
 | GET | `/api/events` | SSE event stream (real-time) |
 
+SSE event types are camelCase: `agentRegistered`, `taskCreated`, `taskClaimed`,
+`taskCompleted`, `heartbeat`.
+
 ### Web Dashboard
 
-- `http://localhost:6868/` — Web UI (dashboard, Connections, inbox, reports, Agents,
-  Brains, roster) with a raw/rendered markdown viewer and artifact downloads
+- `http://localhost:6868/` — Web UI (dashboard, Connections, inbox, Agents, Brains,
+  roster, workflows, chat) with a raw/rendered markdown viewer and artifact downloads
 
 ### MCP Inspector (debugging)
 
@@ -236,13 +246,23 @@ list_inbox(status="pending", platform="hermes")
 
 ```
 claim_task(task_id="<id>", agent_id="your-agent-id")
-complete_task(task_id="<id>", result="Results here", report_path="/path/to/report.md")
+complete_task(task_id="<id>", result="Results here")
 ```
 
-### 6. File a Report
+### 6. Deliver the output (no reports)
 
-```
-```
+Write every file you produce into `$COWORK_ARTIFACTS_DIR` (= `cowork/artifacts/<task-id>/`,
+already your working directory) using **relative paths** — those become the downloadable
+artifacts on the task card. Your stdout becomes `task.result`; long output is truncated
+there but saved in full as `result.md`, so the deliverable belongs in a file, not only in
+stdout. Do not write outside that directory unless the brief names a destination, and do
+not invent filenames — the artifact list is read off disk.
+
+If you cannot finish without a decision only the user can make, end your output with a
+line beginning `NEEDS_INPUT:` followed by your question(s), one per line. The dispatcher
+parks the task on `wait-input` and re-dispatches it once the user answers (their replies
+arrive on `context.humanInput`). Never emit a rate-limit or quota notice as the
+deliverable — the verifier rejects those and hands the task to the next brain in the chain.
 
 ### 7. Query Roster
 
@@ -269,12 +289,48 @@ heartbeat(agent_id="b27e60cf-e3ec-4a2a-8215-70759a53b33f", status="working", cur
 The cowork server tracks `lastHeartbeat` per agent. Agents not heartbeating in ~30 min
 may appear stale on the dashboard.
 
+## Credential / local-filesystem rule (CONVENTIONS.md §6)
+
+Any task that needs the **local filesystem** — credentials under `~/.priv/`, or any path
+under the cowork host's home dir — MUST run on a **local** brain. Pin it explicitly:
+`context: {"brain": "local-ha-deepseek-v4-pro"}`. `remote-*` brains cannot see that
+filesystem; such a task routed to one will fail or vanish. If you are a remote brain and
+the brief needs local files, report the routing error and stop — do not fake it.
+
+## REST API: task creation body shape (critical)
+
+`POST /api/inbox` does **not** take the MCP tool's flat argument names. Use the nested
+task schema:
+
+```json
+{
+  "title": "…",
+  "description": "…",
+  "from": {"platform": "hermes", "agent": "<your agent name>"},
+  "to": {},
+  "context": {"brain": "local-ha-deepseek-v4-pro"}
+}
+```
+
+- `from` — an object with `platform` + `agent` (NOT `from_platform` / `from_agent`);
+  it is the only required field besides `title` and `description`
+- `to` — an object, `{}` when unassigned (NOT a bare string like `"hermes"`; a string is
+  silently read as no target)
+- scheduling — this endpoint accepts **either** `scheduledAt` or `scheduled_at`
+- `inputs: [{token, name}]` — attach files staged via `POST /api/uploads?name=<file>`
+
+The flat `from_platform` / `from_agent` / `to_platform` / `to_agent` form is the **MCP
+`create_task` tool's** interface only.
+
 ## Pitfalls
 
 - Server must be running — check with `curl -s http://localhost:6868/api/status`
 - MCP endpoint: `/mcp` (Streamable HTTP). REST API: `/api/...`. Do not mix.
 - `apiKey` in config.json: if set, all requests need `Authorization: Bearer ***` header.
-- Task lifecycle: `pending` → `claimed` → `in-progress` → `done` → `rejected`
+- Task lifecycle: `scheduled` / `wait-input` → `pending` → `claimed` → `in-progress` →
+  `done` / `rejected`; a task whose whole chain was rejected finishes `failed: true`
+  (re-queue with `POST /api/inbox/:id/rerun`). `scheduled` and `wait-input` are held OUT
+  of the pending pool — never claimed or routed until released.
 - SSE at `/api/events` needs `curl -N` (no buffering).
 - Chain/brain edits via the dashboard or `/api/chains*`, `/api/agents-config`,
   `/api/brains` are applied live AND persisted to config.json (no restart). Only manual

@@ -1,6 +1,6 @@
 ---
 name: cowork
-description: Full-lifecycle Cowork multi-agent framework skill — register brains, manage tasks, file reports, run workflows, and administer the local Cowork MCP server at http://localhost:6868.
+description: Full-lifecycle Cowork multi-agent framework skill — register brains, dispatch and schedule tasks, collect artifacts, run workflows, and administer the local Cowork MCP server at http://localhost:6868.
 ---
 
 # Cowork — Multi-Agent Coordination Skill
@@ -8,8 +8,11 @@ description: Full-lifecycle Cowork multi-agent framework skill — register brai
 You are connected to the **Cowork MCP server** at `http://localhost:6868/mcp` (configured
 in `~/.gemini/config/mcp.json`). Cowork is a filesystem-based MCP server + Web UI
 dashboard that enables multi-platform AI agents (Claude Code, Antigravity, Hermes, Gemini
-CLI, and others) to coordinate, dispatch tasks, and share reports through a single pane of
+CLI, and others) to coordinate, dispatch tasks, and share results through a single pane of
 glass.
+
+> **There is no report store.** `file_report` and `complete_task(report_path:)` were
+> removed. A task's complete record is `task.result` + `artifacts/<task-id>/`.
 
 > **Operating rules:** every task you execute runs under [CONVENTIONS.md](https://github.com/slashman413/cowork/blob/main/CONVENTIONS.md) —
 > put output in `$COWORK_ARTIFACTS_DIR`, use your full permissions freely, and ask
@@ -20,7 +23,7 @@ glass.
 - "Dispatch a task to Claude / Hermes for code review" / "create a task for another agent"
 - "Show me the agent roster" / "what agents are available"
 - "Check my inbox" / "list pending tasks"
-- "File a report" after completing work
+- "Schedule this for 9am tomorrow" (`create_task(scheduled_at: …)`)
 - "Show the dashboard" / "what's happening across agents"
 - "Register this agent" / "add my brains"
 - Cross-platform agent coordination (Antigravity, Claude Code, Hermes, Codex, etc.)
@@ -48,9 +51,10 @@ glass.
 | `~/.config/cowork-local-brain/agy.env` | Brain client env (COWORK_URL, BRAINS, EXEC, HOST) |
 | `~/.config/systemd/user/cowork-local-brain@.service` | Systemd template unit |
 | `~/workspace/github/slashman413/cowork/` | Source repo |
-| `inbox/` | Task queue (JSON files, auto-managed) |
-| `reports/` | Generated reports (markdown with YAML frontmatter) |
-| `artifacts/` | Per-task output files (audio/video/md), downloadable from the Inbox |
+| `inbox/` | Task queue (JSON files, server-owned — never edit by hand) |
+| `artifacts/<task-id>/` | Per-task OUTPUT files — write yours here; downloadable from the Inbox |
+| `inputs/<task-id>/` | Per-task INPUT files a person attached — read-only |
+| `decisions/lessons.jsonl` | Lesson ledger (server-owned, gitignored) |
 | `.status/` | Runtime state (auto-managed) |
 | `deploy/remote-brain-client.mjs` | Remote brain registration script (zero-config) |
 
@@ -88,12 +92,17 @@ All tools are called via the `cowork` MCP server. Use these tools directly.
 
 | Tool | Purpose | Key Arguments |
 |------|---------|---------------|
-| `create_task` | Create a cross-platform task | `title`, `description`, `from_platform`, `from_agent`, `to_platform`, `to_agent`, `priority`, `context`, `tags` |
-| `list_inbox` | List tasks (filterable by status/platform) | `status`, `platform`, `limit` |
+| `create_task` | Create a cross-platform task | `title`, `description`, `from_platform`, `from_agent`, `to_platform`, `to_agent`, `priority`, `context`, `tags`, `scheduled_at`, `interaction` |
+| `list_inbox` | List tasks (filterable by status/platform) | `status` (`wait-input`/`scheduled`/`pending`/`claimed`/`in-progress`/`done`/`rejected`), `platform`, `agent`, `limit` |
 | `claim_task` | Claim a pending task | `task_id`, `agent_id` |
-| `complete_task` | Mark task as done with result | `task_id`, `result`, `report_path` |
+| `complete_task` | Mark task as done with result | `task_id`, `result` |
 
-### Reports & Intelligence
+`scheduled_at` (ISO 8601) parks a task as `scheduled` until its launch time — default is
+run now. `interaction` (`{prompt?, fields:[{id,label,type?,options?,required?}]}`) renders
+a form on the Inbox card and holds the task on `wait-input` until a person answers; their
+replies arrive on `context.humanInput`.
+
+### Roster & Intelligence
 
 | Tool | Purpose | Key Arguments |
 |------|---------|---------------|
@@ -254,8 +263,9 @@ loop:
   2. list_inbox(status="pending", limit=50)
   3. Filter for tasks where context.brain matches one of your brain IDs
   4. claim_task(task_id, agent_id)
-  5. Execute the task
-  7. complete_task(task_id, result, report_path)
+  5. heartbeat(agent_id, status="working", current_task=<task title>)
+  6. Execute the task — write output files into $COWORK_ARTIFACTS_DIR
+  7. complete_task(task_id, result)
   8. heartbeat(agent_id, status="idle")
   9. Wait POLL_MS (default 5000ms), repeat
 ```
@@ -316,13 +326,23 @@ list_inbox(status="pending", platform="antigravity")
 
 ```
 claim_task(task_id="<id>", agent_id="<your-agent-id>")
-complete_task(task_id="<id>", result="Results here", report_path="/path/to/report.md")
+complete_task(task_id="<id>", result="Results here")
 ```
 
-### 6. File a Report
+### 6. Deliver the Output (No Reports)
 
-```
-```
+Write every file you produce into `$COWORK_ARTIFACTS_DIR` (= `cowork/artifacts/<task-id>/`,
+already your working directory) using **relative paths** — those become the downloadable
+artifacts on the task card. Your stdout becomes `task.result`; long output is truncated
+there but saved in full as `result.md`, so the deliverable belongs in a file, not only in
+stdout. Do not write outside that directory unless the brief names a destination, and do
+not invent filenames — the artifact list is read off disk.
+
+If you cannot finish without a decision only the user can make, end your output with a
+line beginning `NEEDS_INPUT:` followed by your question(s), one per line. The dispatcher
+parks the task on `wait-input` and re-dispatches it once the user answers. Never emit a
+rate-limit or quota notice as the deliverable — the verifier rejects those and hands the
+task to the next brain in the chain.
 
 ### 7. Query Roster
 
@@ -336,7 +356,8 @@ get_roster(division="engineering", search="keyword")
 
 Tell any agent (e.g. Hermes on Discord) an idea → it files ONE `orchestrator` task → the
 orchestrator decomposes and fans out → results + full transcripts appear on the dashboard.
-Full outputs are filed as `task-output` reports.
+Each task's full output is its `result` (plus `result.md` and any files in
+`artifacts/<task-id>/`).
 
 When dispatching from Antigravity:
 
@@ -420,6 +441,10 @@ Body: { "params": { "topic": "value" }, "dryRun": false }
 | `GET` | `/api/inbox?status=pending` | Inbox tasks (filterable) |
 | `POST` | `/api/inbox` | Create a new task |
 | `PATCH` | `/api/inbox/:id` | Claim or complete a task |
+| `POST` | `/api/inbox/:id/rerun` | Re-queue a FAILED (chain-exhausted) task from the top of its chain |
+| `POST` | `/api/inbox/:id/continue` | Spawn a follow-up to a finished task (same brain by default) |
+| `POST` | `/api/inbox/:id/interaction` | Submit a person's answers → releases a `wait-input` task |
+| `GET`/`POST` | `/api/inputs/:taskId`, `/api/inbox/:id/inputs` | List / attach task input files |
 | `GET` | `/api/config` | Current configuration |
 | `GET` | `/api/workflows` | Workflow templates |
 | `POST` | `/api/workflows/:id/run` | Start a workflow run |
@@ -491,17 +516,19 @@ curl -s http://localhost:6868/api/brains | jq
 
 ## SSE Events (Real-Time)
 
-Subscribe at `GET /api/events` for live updates:
+Subscribe at `GET /api/events` for live updates. Type names are **camelCase** and each
+frame is `{ type, payload, timestamp }`:
 
 | Event | Payload |
 |-------|---------|
-| `agent_registered` | `{ agent }` |
-| `agent_heartbeat` | `{ agentId, status, currentTask }` |
-| `agent_disconnected` | `{ agentId }` |
-| `task_created` | `{ task }` |
-| `task_claimed` | `{ taskId, claimedBy }` |
-| `task_completed` | `{ taskId, result }` |
-| `report_filed` | `{ report }` |
+| `agentRegistered` | `{ agent }` |
+| `heartbeat` | `{ agentId, status, currentTask? }` |
+| `taskCreated` | `{ task }` |
+| `taskClaimed` | `{ task, agentId }` |
+| `taskCompleted` | `{ task }` |
+
+There is no `agent_disconnected` event (silently pruned) and no `report_filed` event
+(the report store was removed).
 
 ---
 
@@ -516,7 +543,10 @@ or `GET /api/artifacts/:taskId/:file`.
 - Server must be running — check with `curl -s http://localhost:6868/api/status`
 - MCP endpoint: `/mcp` (Streamable HTTP). REST API: `/api/...`. Do not mix.
 - `apiKey` in config.json: if set, all requests need `Authorization: Bearer ***` header.
-- Task lifecycle: `pending` → `claimed` → `in-progress` → `done` / `rejected`
+- Task lifecycle: `scheduled` / `wait-input` → `pending` → `claimed` → `in-progress` →
+  `done` / `rejected`; a task whose whole chain was rejected finishes `failed: true`
+  (re-queue with `POST /api/inbox/:id/rerun`). `scheduled` and `wait-input` are held OUT
+  of the pending pool — never claimed or routed until released.
 - SSE at `/api/events` needs `curl -N` (no buffering).
 - Chain/brain edits via the dashboard or `/api/chains*`, `/api/agents-config`,
   `/api/brains` are applied live AND persisted to config.json (no restart). Only manual

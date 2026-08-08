@@ -1,6 +1,6 @@
 ---
 name: cowork
-description: Coordinate with other AI agents through the Cowork MCP server: inspect the shared dashboard and inbox, dispatch or claim tasks, search the roster, and file cross-agent reports. Use when the user asks to delegate work, check Cowork task status, coordinate with another platform, or publish a Cowork report.
+description: Coordinate with other AI agents through the Cowork MCP server: inspect the shared dashboard and inbox, dispatch, schedule, or claim tasks, search the roster, and deliver task artifacts. Use when the user asks to delegate work, check Cowork task status, or coordinate with another platform.
 ---
 
 # Cowork — Multi-Agent Coordination
@@ -40,9 +40,12 @@ journalctl --user -u cowork-local-brain@codex.service -n 100 --no-pager
    to avoid duplicate tasks.
 4. Dispatch with `create_task`. Supply a complete description, origin identity, and
    `context.role` for automatic roster routing. Pin `context.brain` only when a
-   specific execution identity is required.
-5. For assigned manual work: `claim_task` → perform it → `complete_task` with the result
-   context is useful → `complete_task` with the result and optional report path.
+   specific execution identity is required. Pass `scheduled_at` (ISO 8601) to park the
+   task until a launch time, or an `interaction` packet to collect answers from a person
+   first (the task waits on `wait-input` until they reply).
+5. For assigned manual work: `claim_task` → perform it → `complete_task(task_id, result)`.
+   There is no report store and no `report_path` argument — the deliverable is the result
+   plus whatever you write into `$COWORK_ARTIFACTS_DIR`.
 
 ## Routing
 
@@ -65,5 +68,7 @@ journalctl --user -u cowork-local-brain@codex.service -n 100 --no-pager
 
 Keep task results concise but complete. Save deliverable files to the task's
 `$COWORK_ARTIFACTS_DIR` when executing as a worker; Cowork uploads those files as
-artifacts. Do not hand-edit `inbox/`, `reports/`, `artifacts/`, or `.status/` while the
-server is running.
+artifacts. Do not hand-edit `inbox/`, `inputs/`, `workflow-runs/`, or `.status/` — they
+are server-owned. If you cannot finish without a decision only the user can make, end
+your output with a line beginning `NEEDS_INPUT:` followed by your question(s): the task
+parks on `wait-input` instead of being marked done, and is re-dispatched once answered.

@@ -128,16 +128,22 @@ division). With none set, the two-stage router picks division → roster agent.
 
 ## 4. SSE Events
 
-The server pushes real-time events via Server-Sent Events at `/api/events`:
+The server pushes real-time events via Server-Sent Events at `/api/events`. Event
+type names are **camelCase** and each frame is `{ type, payload, timestamp }`
+(`CoworkEventPayloads` in `server/src/types.ts` is the authority):
 
 | Event | Payload |
 |-------|---------|
-| `agent_registered` | `{ agent }` |
-| `agent_heartbeat` | `{ agentId, status, currentTask }` |
-| `agent_disconnected` | `{ agentId }` |
-| `task_created` | `{ task }` |
-| `task_claimed` | `{ taskId, claimedBy }` |
-| `task_completed` | `{ taskId, result }` |
+| `agentRegistered` | `{ agent }` |
+| `heartbeat` | `{ agentId, status, currentTask? }` |
+| `taskCreated` | `{ task }` |
+| `taskClaimed` | `{ task, agentId }` |
+| `taskCompleted` | `{ task }` |
+
+Subscribe with `curl -N http://localhost:6868/api/events` (no buffering). There is
+no `agent_disconnected` event — a client that stops heartbeating is pruned silently
+— and no `report_filed` event: the report store was removed, so a task's record is
+`task.result` + `artifacts/<task-id>/`.
 
 ## 5. REST API
 
