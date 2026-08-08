@@ -66,6 +66,16 @@ function pct(n: unknown): number | null {
  * 5h → 7d → other weekly variants → the rest, credits last. Capped at 8 windows
  * — the heartbeat schema's limit. Exported for tests.
  */
+/** True for payload-root keys that name a real rate-limit window (five_hour,
+ *  any *_hour, seven_day, seven_day_*). The usage payload ALSO carries a rotating
+ *  set of internal/experimental A/B buckets under codename keys (nimbus_quill,
+ *  tangelo, cinder_cove, iguana_necktie, omelette_promotional, …) that sometimes
+ *  expose a `utilization` — those are NOT user-facing quotas and must never
+ *  become meter rows, so the top-level fallback is gated on this. */
+function isWindowKey(key: string): boolean {
+  return /_hour$/.test(key) || key === 'seven_day' || key.startsWith('seven_day_');
+}
+
 export function normalizeClaudeUsage(raw: any): BrainUsageWindow[] {
   const label = (kind: string) =>
     kind === 'session' || kind === 'five_hour' ? '5h'
@@ -85,6 +95,7 @@ export function normalizeClaudeUsage(raw: any): BrainUsageWindow[] {
   if (raw && typeof raw === 'object') {
     for (const [key, w] of Object.entries<any>(raw)) {
       if (key === 'limits' || key === 'extra_usage' || key === 'spend') continue;  // handled elsewhere
+      if (!isWindowKey(key)) continue;  // ignore Anthropic's internal A/B buckets (nimbus_quill, tangelo, …)
       add(label(key), pct(w?.utilization), w?.resets_at);
     }
   }

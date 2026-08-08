@@ -194,8 +194,13 @@ async function probeClaudeUsage() {
       if (l?.is_active === false) continue;
       add(label(l.kind || l.group || '?'), clampPct(l?.percent), l?.resets_at);
     }
+    // Gate on real window keys (five_hour, *_hour, seven_day*) — the payload also
+    // carries rotating internal A/B buckets under codename keys (nimbus_quill,
+    // tangelo, cinder_cove, …) that sometimes expose a utilization but are NOT
+    // user-facing quotas and must never become meter rows.
+    const isWindowKey = k => /_hour$/.test(k) || k === 'seven_day' || String(k).startsWith('seven_day_');
     if (raw && typeof raw === 'object') for (const [k, w] of Object.entries(raw)) {
-      if (k === 'limits' || k === 'extra_usage' || k === 'spend') continue;
+      if (k === 'limits' || k === 'extra_usage' || k === 'spend' || !isWindowKey(k)) continue;
       add(label(k), clampPct(w?.utilization), w?.resets_at);
     }
     const rank = l => (l === '5h' ? 0 : l === '7d' ? 1 : l.startsWith('7d-') ? 2 : 3);

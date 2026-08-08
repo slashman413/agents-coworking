@@ -91,6 +91,24 @@ test('claude: appends the extra-usage credits row on both paths; caps at 8 windo
   assert.equal(normalizeClaudeUsage({ ...many, extra_usage: extra }).length, 8);
 });
 
+test('claude: ignores Anthropic internal A/B codename buckets (no garbage rows)', () => {
+  // Captured from a real GET /api/oauth/usage: alongside the genuine windows the
+  // payload carries rotating experimental buckets under codename keys, some with
+  // a utilization (nimbus_quill:0). Those are NOT user quotas and must not leak
+  // into the meters — only 5h + credits should surface here.
+  const w = normalizeClaudeUsage({
+    five_hour: { utilization: 15, resets_at: '2026-08-08T19:30:00Z' },
+    seven_day: null, seven_day_opus: null, seven_day_sonnet: null,
+    tangelo: null, iguana_necktie: null,
+    nimbus_quill: { utilization: 0, resets_at: null },
+    cinder_cove: null, amber_ladder: null, omelette_promotional: null,
+    extra_usage: { is_enabled: true, utilization: 100 },
+    limits: [{ kind: 'session', percent: 15, is_active: true, resets_at: '2026-08-08T19:30:00Z' }],
+    spend: { percent: 100 }, member_dashboard_available: false
+  });
+  assert.deepEqual(w.map(x => x.label), ['5h', 'credits']);
+});
+
 test('claude: clamps out-of-range percents and returns [] on garbage', () => {
   assert.deepEqual(normalizeClaudeUsage({ limits: [{ kind: 'session', percent: 250, is_active: true }] })[0].usedPct, 100);
   assert.deepEqual(normalizeClaudeUsage(null), []);
