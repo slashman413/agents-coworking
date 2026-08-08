@@ -31,6 +31,29 @@ test('claude: maps weekly kinds and skips inactive limits', () => {
   assert.equal(w[0].usedPct, 12.3);
 });
 
+test('claude: merges 5h from top-level five_hour when limits[] carries only weekly', () => {
+  // A plan with weekly caps: limits[] lists ONLY the weekly limit; the 5h
+  // session lives solely at the top-level five_hour. Both meters must surface,
+  // 5h ordered first — the old limits[]-only path dropped the 5h meter here.
+  const w = normalizeClaudeUsage({
+    five_hour: { utilization: 12, resets_at: 'FIVE' },
+    seven_day: null,
+    limits: [{ kind: 'weekly', percent: 55, resets_at: 'WEEK', is_active: true }]
+  });
+  assert.deepEqual(w, [
+    { label: '5h', usedPct: 12, resetsAt: 'FIVE' },
+    { label: '7d', usedPct: 55, resetsAt: 'WEEK' }
+  ]);
+});
+
+test('claude: limits[] wins over a duplicate top-level window (no double row)', () => {
+  const w = normalizeClaudeUsage({
+    five_hour: { utilization: 99, resets_at: 'TOP' },
+    limits: [{ kind: 'session', percent: 8, resets_at: 'AUTH', is_active: true }]
+  });
+  assert.deepEqual(w, [{ label: '5h', usedPct: 8, resetsAt: 'AUTH' }]);
+});
+
 test('claude: falls back to five_hour/seven_day objects when limits[] is absent', () => {
   const w = normalizeClaudeUsage({
     five_hour: { utilization: 40, resets_at: 'X' },

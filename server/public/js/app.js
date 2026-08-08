@@ -45,22 +45,26 @@ function usageMeters(brainIds, usage) {
     byExec.get(u.exec).names.push(shortBrain(id));
   }
   if (!byExec.size) return '';
+  // Friendly names for the known rate-limit windows (falls back to the raw
+  // label for future variants like 7d-opus).
+  const WINDOW_NAMES = { '5h': '5-hour', '7d': 'weekly', credits: 'credits' };
   const blocks = [...byExec.entries()].map(([exec, { u, names }]) => {
     const stale = Date.now() - new Date(u.at).getTime() > 1800000;
     const rows = u.windows.map(w => {
       const p = Math.round(w.usedPct);
       const color = p >= 80 ? '#EF4444' : p >= 50 ? '#EAB308' : '#22C55E';
-      const reset = w.resetsAt ? ` · resets in ${timeUntil(w.resetsAt)}` : '';
-      return `<div class="usage-row" title="${w.resetsAt ? `resets ${new Date(w.resetsAt).toLocaleString()}` : 'reset time unknown'}">
+      const long = WINDOW_NAMES[w.label] || (w.label.startsWith('7d-') ? `weekly ${w.label.slice(3)}` : w.label);
+      const reset = w.resetsAt ? `resets in ${timeUntil(w.resetsAt)}` : 'reset time unknown';
+      return `<div class="usage-row" title="${esc(long)} · ${w.resetsAt ? `resets ${new Date(w.resetsAt).toLocaleString()}` : 'reset time unknown'}">
         <span class="usage-window">${esc(w.label)}</span>
-        <div class="usage-bar"><div class="usage-fill" style="width:${p}%;background:${color}"></div></div>
-        <span class="usage-pct" style="color:${color}">${p}%</span>
+        <div class="usage-track"><div class="usage-fill" style="width:${p}%;background:${color}"></div></div>
+        <span class="usage-pct" style="color:${color}">${p}<span class="usage-pct-sign">%</span></span>
         <span class="usage-reset">${esc(reset)}</span>
       </div>`;
     }).join('');
     return `<div class="usage-brain">
       <div class="usage-brain-head">${badge(exec, '#7C3AED')} <span class="usage-names">${names.map(esc).join(' · ')}</span>
-        <span class="usage-at"${stale ? ' style="color:#EAB308"' : ''}>measured ${timeAgo(u.at)}</span></div>
+        <span class="usage-at"${stale ? ' style="color:#EAB308"' : ''} title="${esc(new Date(u.at).toLocaleString())}">measured ${timeAgo(u.at)}</span></div>
       ${rows}
     </div>`;
   }).join('');

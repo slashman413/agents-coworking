@@ -48,37 +48,48 @@ function pct(n: unknown): number | null {
 }
 
 /**
- * Normalize the Anthropic OAuth usage payload into windows. Prefers the
- * structured `limits[]` array ({kind, percent, resets_at}); falls back to the
- * per-window objects ({utilization, resets_at}) — ANY `*_hour`/`seven_day*`
- * style key that carries a utilization, not a hard-coded list, because the
- * payload keeps growing window variants (seven_day_opus, seven_day_oauth_apps,
- * …) and plans differ in which are non-null. Weekly caps therefore surface
- * whenever the account has them. Also appends the extra-usage credit spend
- * (monthly overflow credits) as a `credits` window when enabled. Capped at 8
- * windows — the heartbeat schema's limit. Exported for tests.
+ * Normalize the Anthropic OAuth usage payload into windows. The payload can
+ * carry a given window in TWO places, and which one is populated varies by
+ * plan: the structured `limits[]` array ({kind, percent, resets_at, is_active})
+ * AND the per-window objects hanging off the payload root ({utilization,
+ * resets_at} under five_hour / seven_day / seven_day_opus / …). A plan with
+ * weekly caps, for instance, may list only the weekly limit in `limits[]` while
+ * the 5h session lives solely at the top-level `five_hour` — so trusting
+ * `limits[]` alone (the old behaviour) silently dropped the 5h meter for those
+ * accounts. We therefore MERGE both sources, deduping by label with `limits[]`
+ * authoritative (it carries is_active/severity), so the 5h AND weekly meters
+ * both surface whenever the account exposes them anywhere. Window keys are not
+ * hard-coded — ANY `*_hour`/`seven_day*` style key with a utilization is picked
+ * up, because the payload keeps growing variants (seven_day_opus,
+ * seven_day_oauth_apps, …). Also appends the extra-usage credit spend (monthly
+ * overflow credits) as a `credits` window when enabled. Windows are ordered
+ * 5h → 7d → other weekly variants → the rest, credits last. Capped at 8 windows
+ * — the heartbeat schema's limit. Exported for tests.
  */
 export function normalizeClaudeUsage(raw: any): BrainUsageWindow[] {
-  const windows: BrainUsageWindow[] = [];
   const label = (kind: string) =>
     kind === 'session' || kind === 'five_hour' ? '5h'
       : kind === 'weekly' || kind === 'seven_day' ? '7d'
       : kind.replace(/^seven_day_/, '7d-');
+  const byLabel = new Map<string, BrainUsageWindow>();  // first writer wins → limits[] authoritative
+  const add = (lbl: string, p: number | null, resetsAt: unknown) => {
+    if (p == null || byLabel.has(lbl)) return;
+    byLabel.set(lbl, { label: lbl, usedPct: p, resetsAt: (resetsAt as string) || undefined });
+  };
   if (Array.isArray(raw?.limits)) {
     for (const l of raw.limits) {
-      const p = pct(l?.percent);
-      if (p == null || l?.is_active === false) continue;
-      windows.push({ label: label(String(l.kind || l.group || '?')), usedPct: p, resetsAt: l.resets_at || undefined });
+      if (l?.is_active === false) continue;
+      add(label(String(l.kind || l.group || '?')), pct(l?.percent), l?.resets_at);
     }
   }
-  if (!windows.length && raw && typeof raw === 'object') {
+  if (raw && typeof raw === 'object') {
     for (const [key, w] of Object.entries<any>(raw)) {
-      if (key === 'extra_usage' || key === 'spend') continue;   // credit spend, added below
-      const p = pct(w?.utilization);
-      if (p == null) continue;
-      windows.push({ label: label(key), usedPct: p, resetsAt: w.resets_at || undefined });
+      if (key === 'limits' || key === 'extra_usage' || key === 'spend') continue;  // handled elsewhere
+      add(label(key), pct(w?.utilization), w?.resets_at);
     }
   }
+  const rank = (l: string) => (l === '5h' ? 0 : l === '7d' ? 1 : l.startsWith('7d-') ? 2 : 3);
+  const windows = [...byLabel.values()].sort((a, b) => rank(a.label) - rank(b.label));
   const extra = raw?.extra_usage;
   const extraPct = pct(extra?.utilization);
   if (extra?.is_enabled && extraPct != null) {
