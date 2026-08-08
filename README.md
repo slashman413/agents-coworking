@@ -1,6 +1,6 @@
 # 🤝 Multi-Agent Cowork Framework
 > ## 🛍️ **Cowork Pro — the production package**
-> The MCP server above is the open-source core. **[Cowork Pro ($99.99)](https://slashmaster6.gumroad.com/l/xfhfps)** adds the full production stack: advanced workflows, priority support & lifetime updates. Also included in the **[AI Developer Stack Bundle ($199)](https://slashmaster6.gumroad.com/l/nulyms)**.
+> The MCP server above is the open-source core. **[Cowork Pro ($59)](https://slashmaster6.gumroad.com/l/xfhfps)** adds the full production stack: advanced workflows, priority support & lifetime updates. Also included in the **[AI Developer Stack Bundle ($79)](https://slashmaster6.gumroad.com/l/nulyms)**.
 
 
 A filesystem-based MCP server + Web UI dashboard that enables multi-platform AI
@@ -797,6 +797,9 @@ The roster is cached in memory and rescanned at most once per `COWORK_ROSTER_TTL
 restart; set `0` to rescan on every query, or a larger value to reduce disk work.
 
 ---
+
+### 🛒 相關產品
+- [Cowork Pro ($59)](https://slashmaster6.gumroad.com/l/xfhfps?utm_source=github&utm_medium=referral) - Full production stack for the multi-agent cowork framework: advanced workflows, priority support & lifetime updates.
 
 ## License
 
