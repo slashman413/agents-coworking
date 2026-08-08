@@ -178,20 +178,28 @@ async function probeClaudeUsage() {
     if (!res.ok) return null;
     const raw = await res.json();
     const label = k => k === 'session' || k === 'five_hour' ? '5h' : k === 'weekly' || k === 'seven_day' ? '7d' : String(k).replace(/^seven_day_/, '7d-');
-    const windows = [];
+    // MERGE both sources the payload can carry a window in — the structured
+    // limits[] array (authoritative: is_active/severity) AND the per-window
+    // objects hanging off the root (five_hour, seven_day, seven_day_opus, …).
+    // Which source populates a given window varies by plan: a plan with weekly
+    // caps may list only the weekly limit in limits[] while the 5h session lives
+    // solely at top-level five_hour, so trusting limits[] alone dropped the 5h
+    // meter for those accounts. Dedup by label, first writer (limits[]) wins.
+    const byLabel = new Map();
+    const add = (lbl, p, resetsAt) => {
+      if (p == null || byLabel.has(lbl)) return;
+      byLabel.set(lbl, { label: lbl, usedPct: p, ...(resetsAt ? { resetsAt } : {}) });
+    };
     for (const l of Array.isArray(raw?.limits) ? raw.limits : []) {
-      const p = clampPct(l?.percent);
-      if (p == null || l?.is_active === false) continue;
-      windows.push({ label: label(l.kind || l.group || '?'), usedPct: p, ...(l.resets_at ? { resetsAt: l.resets_at } : {}) });
+      if (l?.is_active === false) continue;
+      add(label(l.kind || l.group || '?'), clampPct(l?.percent), l?.resets_at);
     }
-    // Fallback: ANY per-window object carrying a utilization (five_hour,
-    // seven_day, seven_day_opus, seven_day_oauth_apps, …) — the payload keeps
-    // growing weekly variants, so don't hard-code the key list.
-    if (!windows.length && raw && typeof raw === 'object') for (const [k, w] of Object.entries(raw)) {
-      if (k === 'extra_usage' || k === 'spend') continue;
-      const p = clampPct(w?.utilization);
-      if (p != null) windows.push({ label: label(k), usedPct: p, ...(w.resets_at ? { resetsAt: w.resets_at } : {}) });
+    if (raw && typeof raw === 'object') for (const [k, w] of Object.entries(raw)) {
+      if (k === 'limits' || k === 'extra_usage' || k === 'spend') continue;
+      add(label(k), clampPct(w?.utilization), w?.resets_at);
     }
+    const rank = l => (l === '5h' ? 0 : l === '7d' ? 1 : l.startsWith('7d-') ? 2 : 3);
+    const windows = [...byLabel.values()].sort((a, b) => rank(a.label) - rank(b.label));
     // Extra-usage credits (monthly overflow spend) as its own row.
     const xp = clampPct(raw?.extra_usage?.utilization);
     if (raw?.extra_usage?.is_enabled && xp != null) {
